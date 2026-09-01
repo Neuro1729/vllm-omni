@@ -442,14 +442,15 @@ class StageRuntime:
                 entered_context = entered_contexts[exited_contexts]
                 exited_contexts += 1
                 entered_context.__exit__(None, None, None)
-        except BaseException:
-            for pending_context in entered_contexts[exited_contexts:]:
-                with contextlib.suppress(BaseException):
-                    pending_context.__exit__(None, None, None)
+        except BaseException as exc:
             if launch is not None:
                 launch.shutdown()
             else:
                 MultiApiStageEngineLaunch(client_configs=client_configs, resources=resources).shutdown()
+            exc_info = (type(exc), exc, exc.__traceback__)
+            for pending_context in reversed(entered_contexts[exited_contexts:]):
+                with contextlib.suppress(BaseException):
+                    pending_context.__exit__(*exc_info)
             raise
         finally:
             if lock_fds:

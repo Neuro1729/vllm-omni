@@ -36,6 +36,18 @@ class _FakeProcessOwner:
     processes: list[_FakeProcess]
 
 
+@dataclass
+class _FakeStageEngineArgs:
+    async_chunk: bool
+    enable_sleep_mode: bool
+
+
+@dataclass
+class _FakeStageConfig:
+    stage_id: int
+    engine_args: _FakeStageEngineArgs
+
+
 def test_serve_parser_accepts_no_async_chunk_and_marks_it_explicit() -> None:
     """``--no-async-chunk`` should parse to ``async_chunk=False`` and mark the
     shared deploy-level dest as explicitly provided by the user."""
@@ -172,6 +184,20 @@ def test_serve_validate_rejects_elastic_ep_with_multiple_api_servers(mocker: Moc
         cmd.validate(args)
 
 
+def test_serve_validate_rejects_sleep_mode_with_multiple_api_servers(mocker: MockerFixture) -> None:
+    parser = TrackingArgumentParser()
+    subparsers = parser.add_subparsers(dest="subcommand")
+    cmd = OmniServeCommand()
+    cmd.subparser_init(subparsers)
+    args = parser.parse_args(["serve", "fake-model", "--omni", "--api-server-count", "2", "--enable-sleep-mode"])
+
+    mocker.patch("vllm_omni.diffusion.utils.hf_utils.is_diffusion_model", return_value=False)
+    mocker.patch("vllm_omni.entrypoints.cli.serve.validate_parsed_serve_args")
+
+    with pytest.raises(ValueError, match="enable-sleep-mode"):
+        cmd.validate(args)
+
+
 def test_serve_validate_rejects_runtime_lora_updates_with_multiple_api_servers(mocker: MockerFixture) -> None:
     parser = TrackingArgumentParser()
     subparsers = parser.add_subparsers(dest="subcommand")
@@ -185,6 +211,72 @@ def test_serve_validate_rejects_runtime_lora_updates_with_multiple_api_servers(m
 
     with pytest.raises(ValueError, match="VLLM_ALLOW_RUNTIME_LORA_UPDATING"):
         cmd.validate(args)
+
+
+def test_build_multi_api_stage_runtime_matches_current_constructor(mocker: MockerFixture) -> None:
+    from vllm_omni.entrypoints.cli import serve as serve_module
+
+    args = TrackingNamespace(
+        argparse.Namespace(
+            model="dummy-model",
+            model_tag=None,
+            stage_init_timeout=1,
+            tokenizer=None,
+            disable_log_stats=False,
+        ),
+        frozenset({"model"}),
+    )
+    stage_config = _FakeStageConfig(
+        stage_id=0,
+        engine_args=_FakeStageEngineArgs(async_chunk=False, enable_sleep_mode=False),
+    )
+    mocker.patch("vllm_omni.entrypoints.omni_base.omni_snapshot_download", return_value="dummy-model")
+    mocker.patch(
+        "vllm_omni.config.config_factory.with_trust_remote_code_override",
+        side_effect=lambda kwargs, _trust: kwargs,
+    )
+    mocker.patch("vllm_omni.entrypoints.utils.parse_stage_overrides", return_value={})
+    mocker.patch(
+        "vllm_omni.entrypoints.utils.load_and_resolve_stage_configs",
+        return_value=("dummy-config", [stage_config], None),
+    )
+
+    runtime = serve_module._build_multi_api_stage_runtime(args, 2)
+
+    assert runtime._client_count == 2
+    assert runtime._client_index == -1
+
+
+def test_build_multi_api_stage_runtime_rejects_sleep_enabled_in_stage_config(mocker: MockerFixture) -> None:
+    from vllm_omni.entrypoints.cli import serve as serve_module
+
+    args = TrackingNamespace(
+        argparse.Namespace(
+            model="dummy-model",
+            model_tag=None,
+            stage_init_timeout=1,
+            tokenizer=None,
+            disable_log_stats=False,
+        ),
+        frozenset({"model"}),
+    )
+    stage_config = _FakeStageConfig(
+        stage_id=3,
+        engine_args=_FakeStageEngineArgs(async_chunk=False, enable_sleep_mode=True),
+    )
+    mocker.patch("vllm_omni.entrypoints.omni_base.omni_snapshot_download", return_value="dummy-model")
+    mocker.patch(
+        "vllm_omni.config.config_factory.with_trust_remote_code_override",
+        side_effect=lambda kwargs, _trust: kwargs,
+    )
+    mocker.patch("vllm_omni.entrypoints.utils.parse_stage_overrides", return_value={})
+    mocker.patch(
+        "vllm_omni.entrypoints.utils.load_and_resolve_stage_configs",
+        return_value=("dummy-config", [stage_config], None),
+    )
+
+    with pytest.raises(ValueError, match=r"sleep mode.*stage\(s\) \[3\]"):
+        serve_module._build_multi_api_stage_runtime(args, 2)
 
 
 def test_run_multi_api_server_omni_starts_workers_after_shared_engine_launch(mocker: MockerFixture) -> None:

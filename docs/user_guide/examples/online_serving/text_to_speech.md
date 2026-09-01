@@ -363,7 +363,10 @@ vllm serve Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice \
 
 This mode supports local EngineCore stages with one local process group per
 stage. Headless, remote, intra-stage data-parallel, and Ray stage deployments
-are not supported.
+are not supported. Runtime voice upload and deletion are disabled with multiple
+API frontends because their registries are process-local. Built-in voices,
+inline `ref_audio`, and voices restored from `custom_voice_dir` at startup are
+supported.
 
 ### Executor backend
 
@@ -426,6 +429,9 @@ curl -X POST http://localhost:8091/v1/audio/voices \
 ```
 
 Uploaded voices are then usable as `voice="custom_voice_1"` on subsequent requests.
+The runtime upload and delete routes require a single API frontend; with
+`--api-server-count > 1`, use inline `ref_audio` or restore precomputed voices
+from `custom_voice_dir` at startup.
 
 ### Precomputed custom voices
 

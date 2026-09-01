@@ -488,7 +488,7 @@ def run_omni_api_server_worker_proc(
     sock: socket.socket,
     args: TrackingNamespace,
     client_config: dict[str, Any] | None = None,
-    **uvicorn_kwargs: Any,
+    **uvicorn_kwargs: object,
 ) -> None:
     """Entrypoint used by vLLM's API server process manager."""
     manager_config = client_config or {}
@@ -527,7 +527,7 @@ async def omni_run_server_worker(
     sock: socket.socket,
     args: TrackingNamespace,
     client_config: dict[str, Any] | None = None,
-    **uvicorn_kwargs: Any,
+    **uvicorn_kwargs: object,
 ) -> None:
     """Run a single API server worker."""
 
@@ -1570,6 +1570,20 @@ async def list_voices(raw_request: Request):
     return JSONResponse(content={"voices": speakers, "uploaded_voices": uploaded_speakers})
 
 
+def _reject_process_local_mutation_with_multiple_api_workers(raw_request: Request, operation: str) -> None:
+    """Reject control-plane mutations that are not synchronized across API workers."""
+    args = getattr(raw_request.app.state, "args", None)
+    api_server_count = int(getattr(args, "api_server_count", 1) or 1)
+    if api_server_count > 1:
+        raise HTTPException(
+            status_code=HTTPStatus.CONFLICT.value,
+            detail=(
+                f"{operation} is not supported with --api-server-count > 1 because "
+                "the operation uses process-local frontend state"
+            ),
+        )
+
+
 @router.post(
     "/v1/audio/voices",
     responses={
@@ -1615,6 +1629,7 @@ async def upload_voice(
     Returns:
         JSON response with voice information
     """
+    _reject_process_local_mutation_with_multiple_api_workers(raw_request, "Runtime voice upload")
     handler = Omnispeech(raw_request)
     if handler is None:
         return _create_speech_error_json_response(
@@ -1680,6 +1695,7 @@ async def delete_voice(name: str, raw_request: Request):
     Returns:
         JSON response indicating success or failure
     """
+    _reject_process_local_mutation_with_multiple_api_workers(raw_request, "Runtime voice deletion")
     handler = Omnispeech(raw_request)
     if handler is None:
         return _create_speech_error_json_response(
@@ -3870,6 +3886,7 @@ class OmniWakeupRequest(BaseModel):
 
 @router.post("/v1/omni/sleep")
 async def omni_sleep(request: OmniSleepRequest, raw_request: Request):
+    _reject_process_local_mutation_with_multiple_api_workers(raw_request, "Sleep")
     engine_client = raw_request.app.state.engine_client
     sleeping_set = raw_request.app.state.sleeping_stages
     if not hasattr(engine_client, "sleep"):
@@ -3882,6 +3899,7 @@ async def omni_sleep(request: OmniSleepRequest, raw_request: Request):
 
 @router.post("/v1/omni/wakeup")
 async def omni_wakeup(request: OmniWakeupRequest, raw_request: Request):
+    _reject_process_local_mutation_with_multiple_api_workers(raw_request, "Wakeup")
     engine_client = raw_request.app.state.engine_client
     sleeping_set = raw_request.app.state.sleeping_stages
     if not any(sid in sleeping_set for sid in request.stage_ids):

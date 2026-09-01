@@ -170,6 +170,8 @@ class OmniServeCommand(CLISubcommand):
                 raise ValueError("--api-server-count > 1 cannot be combined with --enable-fault-tolerance")
             if getattr(args, "enable_elastic_ep", False):
                 raise ValueError("--api-server-count > 1 cannot be combined with --enable-elastic-ep")
+            if getattr(args, "enable_sleep_mode", False):
+                raise ValueError("--api-server-count > 1 cannot be combined with --enable-sleep-mode")
             from vllm import envs as vllm_envs
 
             if getattr(vllm_envs, "VLLM_ALLOW_RUNTIME_LORA_UPDATING", False):
@@ -967,8 +969,6 @@ class OmniServeCommand(CLISubcommand):
 
 def _build_multi_api_stage_runtime(args: TrackingNamespace, num_api_servers: int) -> StageRuntime:
     """Resolve the local EngineCore stages that the parent process owns."""
-    from omegaconf import OmegaConf
-
     from vllm_omni.config.config_factory import with_trust_remote_code_override
     from vllm_omni.engine.stage_runtime import StageRuntime
     from vllm_omni.entrypoints.omni_base import omni_snapshot_download
@@ -999,13 +999,16 @@ def _build_multi_api_stage_runtime(args: TrackingNamespace, num_api_servers: int
         strategy_config_path=strategy_config_path,
     )
 
-    global_sleep_mode = kwargs.get("enable_sleep_mode")
-    if global_sleep_mode is not None:
-        for stage_config in stage_configs:
-            if not hasattr(stage_config, "engine_args") or stage_config.engine_args is None:
-                stage_config.engine_args = OmegaConf.create({})
-            if getattr(stage_config.engine_args, "enable_sleep_mode", None) is None:
-                stage_config.engine_args.enable_sleep_mode = global_sleep_mode
+    sleep_stages = [
+        int(getattr(stage_config, "stage_id", stage_index))
+        for stage_index, stage_config in enumerate(stage_configs)
+        if bool(getattr(getattr(stage_config, "engine_args", None), "enable_sleep_mode", False))
+    ]
+    if sleep_stages:
+        raise ValueError(
+            "--api-server-count > 1 cannot be combined with sleep mode; "
+            f"disable enable_sleep_mode for stage(s) {sleep_stages}"
+        )
 
     stage0_args = getattr(stage_configs[0], "engine_args", None) if stage_configs else None
     async_chunk = bool(getattr(stage0_args, "async_chunk", False))
@@ -1014,7 +1017,6 @@ def _build_multi_api_stage_runtime(args: TrackingNamespace, num_api_servers: int
         model=model,
         config_path=config_path,
         stage_init_timeout=int(getattr(args, "stage_init_timeout", 300)),
-        diffusion_batch_size=int(getattr(args, "diffusion_batch_size", 1)),
         async_chunk=async_chunk,
         tokenizer=getattr(args, "tokenizer", None),
         log_stats=not bool(getattr(args, "disable_log_stats", False)),

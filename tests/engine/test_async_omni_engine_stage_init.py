@@ -820,7 +820,6 @@ def test_stage_runtime_attaches_external_llm_client_without_launching_engine(mon
         model="dummy-model",
         config_path="dummy-config",
         stage_init_timeout=1,
-        diffusion_batch_size=1,
         async_chunk=False,
         client_config=client_config,
     )
@@ -984,6 +983,50 @@ def test_stage_runtime_multi_api_rejects_deferred_tcp_addresses(monkeypatch):
             pass
 
 
+def test_stage_runtime_multi_api_failure_shuts_down_before_exceptional_context_exit(monkeypatch):
+    import vllm_omni.engine.stage_runtime as runtime_mod
+
+    runtime = _make_stage_runtime()
+    stage_plan = _make_llm_plan(0, stage_id=0, vllm_config=_FakeVllmConfig())
+    stage_plan.replicas[0].engine_args_dict = {}
+    monkeypatch.setattr(runtime, "_prepare_stage_plans", lambda: [stage_plan])
+    monkeypatch.setattr(runtime, "_resolve_replica_physical_devices", lambda *_args: None)
+    monkeypatch.setattr(runtime_mod, "acquire_device_locks", lambda *_args: [])
+
+    events: list[str] = []
+
+    class _Manager:
+        def shutdown(self) -> None:
+            events.append("shutdown")
+
+    @contextlib.contextmanager
+    def _fake_launch_stage_replica(**_kwargs):
+        try:
+            yield StageReplicaResources(
+                manager=_Manager(),
+                addresses=EngineZmqAddresses(
+                    inputs=["tcp://127.0.0.1:0", "tcp://127.0.0.1:1"],
+                    outputs=["tcp://127.0.0.1:2", "tcp://127.0.0.1:3"],
+                ),
+            )
+        except RuntimeError as exc:
+            events.append(f"exceptional-exit:{exc}")
+            raise
+        else:
+            events.append("normal-exit")
+
+    monkeypatch.setattr(runtime_mod, "launch_stage_replica", _fake_launch_stage_replica)
+
+    with pytest.raises(RuntimeError, match="deferred TCP addresses"):
+        with runtime.launch_stage_engines(2):
+            pass
+
+    assert events == [
+        "shutdown",
+        "exceptional-exit:Stage 0 returned deferred TCP addresses; multi-API launch requires fixed ports or IPC addresses",
+    ]
+
+
 def test_stage_runtime_multi_api_rejects_fault_tolerance_from_stage_config(monkeypatch):
     runtime = _make_stage_runtime()
     parallel_config = _FakeParallelConfig(enable_fault_tolerance=True)
@@ -1141,7 +1184,6 @@ def test_build_logical_stage_init_plans_constructs_multi_api_topology_before_val
         model="dummy-model",
         config_path="dummy-config",
         stage_init_timeout=1,
-        diffusion_batch_size=1,
         async_chunk=False,
         client_config={"client_count": 2, "client_index": 1, "stage_addresses": {}},
     )
