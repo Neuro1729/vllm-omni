@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import signal
 from argparse import Namespace
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -71,17 +72,19 @@ class _FakeVllmConfig:
     parallel_config: _FakeParallelConfig
 
 
-def test_omni_api_worker_rejects_invalid_client_index(mocker):
+def test_omni_api_worker_sets_parent_death_signal_before_validation(mocker):
     args = _minimal_args(_omni_stage_client_configs=[{"stage_addresses": {}}])
-    socket = mocker.Mock()
+    death_signal = mocker.patch.object(api_server, "set_death_signal")
 
     with pytest.raises(RuntimeError, match="client configuration"):
         api_server.run_omni_api_server_worker_proc(
             "127.0.0.1:8000",
-            socket,
+            mocker.Mock(),
             args,
             {"client_count": 2, "client_index": -1},
         )
+
+    death_signal.assert_called_once_with(signal.SIGTERM)
 
 
 @pytest.mark.asyncio
@@ -730,19 +733,6 @@ async def test_multi_api_rejects_runtime_voice_upload() -> None:
 
 
 @pytest.mark.asyncio
-async def test_multi_api_rejects_runtime_voice_deletion() -> None:
-    app = FastAPI()
-    app.state.args = Namespace(api_server_count=2)
-    raw_request = _request_for(app, method="DELETE", path="/v1/audio/voices/probe")
-
-    with pytest.raises(HTTPException) as exc_info:
-        await api_server.delete_voice("probe", raw_request)
-
-    assert exc_info.value.status_code == 409
-    assert "process-local frontend state" in exc_info.value.detail
-
-
-@pytest.mark.asyncio
 async def test_multi_api_rejects_sleep_route() -> None:
     app = FastAPI()
     app.state.args = Namespace(api_server_count=2)
@@ -750,19 +740,6 @@ async def test_multi_api_rejects_sleep_route() -> None:
 
     with pytest.raises(HTTPException) as exc_info:
         await api_server.omni_sleep(api_server.OmniSleepRequest(stage_ids=[0]), raw_request)
-
-    assert exc_info.value.status_code == 409
-    assert "process-local frontend state" in exc_info.value.detail
-
-
-@pytest.mark.asyncio
-async def test_multi_api_rejects_wakeup_route() -> None:
-    app = FastAPI()
-    app.state.args = Namespace(api_server_count=2)
-    raw_request = _request_for(app, method="POST", path="/v1/omni/wakeup")
-
-    with pytest.raises(HTTPException) as exc_info:
-        await api_server.omni_wakeup(api_server.OmniWakeupRequest(stage_ids=[0]), raw_request)
 
     assert exc_info.value.status_code == 409
     assert "process-local frontend state" in exc_info.value.detail

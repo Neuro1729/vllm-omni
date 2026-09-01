@@ -396,7 +396,6 @@ class StageRuntime:
                             stage_visible_devices=physical_devices,
                             spawn_device_lock=self._spawn_device_lock,
                             num_api_servers=num_api_servers,
-                            defer_api_server_ports=False,
                             watched_frontend_processes=watched_frontend_processes,
                         )
                         stage_resources = launch_context.__enter__()

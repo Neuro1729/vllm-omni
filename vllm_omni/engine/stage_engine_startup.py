@@ -1122,7 +1122,6 @@ def launch_stage_replica(
     stage_visible_devices: str | None = None,
     spawn_device_lock: threading.Lock | None = None,
     num_api_servers: int = 1,
-    defer_api_server_ports: bool = True,
     watched_frontend_processes: list[BaseProcess] | None = None,
 ) -> Iterator[StageReplicaResources]:
     """Launch a local LLM stage replica.
@@ -1169,11 +1168,7 @@ def launch_stage_replica(
             outputs=[get_open_zmq_ipc_path() for _ in range(num_api_servers)],
         )
     else:
-        addresses = get_engine_zmq_addresses(
-            vllm_config,
-            num_api_servers,
-            defer_api_server_ports=defer_api_server_ports,
-        )
+        addresses = get_engine_zmq_addresses(vllm_config)
     handshake_address = get_open_zmq_ipc_path()
     engines_to_handshake = [CoreEngine(index=0, local=True)]
     with scoped_spawn_device_env(stage_visible_devices, spawn_device_lock, stage_id=stage_id, replica_id=replica_id):
@@ -1196,21 +1191,21 @@ def launch_stage_replica(
             manager=engine_manager,
             addresses=addresses,
         )
+        engine_launch = CoreEngineLaunch(
+            engine_manager=engine_manager,
+            coordinator=None,
+            addresses=addresses,
+            tensor_queue=None,
+        )
+        if watched_frontend_processes is not None:
+            engine_launch.watched_frontend_processes = watched_frontend_processes
         wait_for_engine_startup(
             handshake_socket,
             engines_to_handshake,
             vllm_config.parallel_config,
             False,  # coordinated_dp
             vllm_config.cache_config,
-            CoreEngineLaunch(
-                engine_manager=engine_manager,
-                coordinator=None,
-                addresses=addresses,
-                tensor_queue=None,
-                watched_frontend_processes=(
-                    watched_frontend_processes if watched_frontend_processes is not None else ()
-                ),
-            ),
+            engine_launch,
         )
 
 

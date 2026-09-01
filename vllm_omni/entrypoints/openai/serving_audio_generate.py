@@ -1,6 +1,3 @@
-# SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: Copyright contributors to the vLLM-Omni project
-
 import asyncio
 
 import torch
@@ -158,7 +155,7 @@ class OmniOpenAIServingAudioGenerate(OpenAIServing, AudioMixin):
                 base64_encode=False,
             )
 
-            audio_response: AudioResponse = await asyncio.to_thread(self.create_audio, audio_obj)
+            audio_response: AudioResponse = self.create_audio(audio_obj)
             return Response(content=audio_response.audio_data, media_type=audio_response.media_type)
 
         except asyncio.CancelledError:

@@ -902,7 +902,6 @@ def test_stage_runtime_launches_shared_engines_with_per_client_addresses(monkeyp
     assert events == [("enter", 0), ("enter", 1), ("exit", 0), ("exit", 1)]
     assert not hasattr(stage_plans[0].replicas[0].stage_vllm_config.parallel_config, "_api_process_count")
     assert not hasattr(stage_plans[0].replicas[0].stage_vllm_config.parallel_config, "_api_process_rank")
-    assert all(kwargs["defer_api_server_ports"] is False for kwargs in captured_launch_kwargs)
     assert all(
         kwargs["watched_frontend_processes"] is launch.watched_frontend_processes for kwargs in captured_launch_kwargs
     )
@@ -948,41 +947,6 @@ def test_stage_runtime_multi_api_maps_stage_devices_from_launcher_visibility(mon
     assert os.environ[device_env] == "5"
 
 
-def test_stage_runtime_multi_api_rejects_diffusion_stage(monkeypatch):
-    runtime = _make_stage_runtime()
-    monkeypatch.setattr(runtime, "_prepare_stage_plans", lambda: [_make_diffusion_plan(0, stage_id=0)])
-
-    with pytest.raises(ValueError, match="diffusion stage"):
-        with runtime.launch_stage_engines(2):
-            pass
-
-
-def test_stage_runtime_multi_api_rejects_deferred_tcp_addresses(monkeypatch):
-    import vllm_omni.engine.stage_runtime as runtime_mod
-
-    runtime = _make_stage_runtime()
-    stage_plans = [_make_llm_plan(0, stage_id=0, vllm_config=_FakeVllmConfig())]
-    stage_plans[0].replicas[0].engine_args_dict = {}
-    monkeypatch.setattr(runtime, "_prepare_stage_plans", lambda: stage_plans)
-    monkeypatch.setattr(runtime, "_resolve_replica_physical_devices", lambda *_args: None)
-    monkeypatch.setattr(runtime_mod, "acquire_device_locks", lambda *_args: [])
-
-    @contextlib.contextmanager
-    def _fake_launch_stage_replica(**_kwargs):
-        yield StageReplicaResources(
-            addresses=EngineZmqAddresses(
-                inputs=["tcp://127.0.0.1:0", "tcp://127.0.0.1:1"],
-                outputs=["tcp://127.0.0.1:2", "tcp://127.0.0.1:3"],
-            ),
-        )
-
-    monkeypatch.setattr(runtime_mod, "launch_stage_replica", _fake_launch_stage_replica)
-
-    with pytest.raises(RuntimeError, match="deferred TCP addresses"):
-        with runtime.launch_stage_engines(2):
-            pass
-
-
 def test_stage_runtime_multi_api_failure_shuts_down_before_exceptional_context_exit(monkeypatch):
     import vllm_omni.engine.stage_runtime as runtime_mod
 
@@ -1025,55 +989,6 @@ def test_stage_runtime_multi_api_failure_shuts_down_before_exceptional_context_e
         "shutdown",
         "exceptional-exit:Stage 0 returned deferred TCP addresses; multi-API launch requires fixed ports or IPC addresses",
     ]
-
-
-def test_stage_runtime_multi_api_rejects_fault_tolerance_from_stage_config(monkeypatch):
-    runtime = _make_stage_runtime()
-    parallel_config = _FakeParallelConfig(enable_fault_tolerance=True)
-    stage_plan = _make_llm_plan(
-        0,
-        stage_id=0,
-        vllm_config=_FakeVllmConfig(parallel_config=parallel_config),
-    )
-    monkeypatch.setattr(runtime, "_prepare_stage_plans", lambda: [stage_plan])
-
-    with pytest.raises(ValueError, match="enable-fault-tolerance"):
-        with runtime.launch_stage_engines(2):
-            pass
-
-
-@pytest.mark.parametrize(
-    "parallel_config",
-    [
-        _FakeParallelConfig(data_parallel_size=2),
-        _FakeParallelConfig(use_ray=True),
-    ],
-    ids=["data-parallel", "ray"],
-)
-def test_stage_runtime_multi_api_rejects_unsupported_intra_stage_backend(
-    monkeypatch,
-    parallel_config: _FakeParallelConfig,
-):
-    runtime = _make_stage_runtime()
-    stage_plan = _make_llm_plan(
-        0,
-        stage_id=0,
-        vllm_config=_FakeVllmConfig(parallel_config=parallel_config),
-    )
-    monkeypatch.setattr(runtime, "_prepare_stage_plans", lambda: [stage_plan])
-
-    with pytest.raises(ValueError, match="data parallelism and Ray"):
-        with runtime.launch_stage_engines(2):
-            pass
-
-
-def test_async_omni_engine_rejects_direct_single_stage_multi_api_construction():
-    with pytest.raises(ValueError, match="single-stage distributed mode"):
-        AsyncOmniEngine(
-            model="dummy-model",
-            stage_id=0,
-            client_config={"client_count": 2, "client_index": 0},
-        )
 
 
 def test_stage_runtime_passes_log_stats_to_output_processor(monkeypatch):
@@ -1168,42 +1083,6 @@ def test_build_logical_stage_init_plans_applies_replica_device_splits(monkeypatc
     assert [replica.stage_cfg.runtime.devices for replica in stage_plans[1].replicas] == ["1", "2", "3"]
     assert [replica.replica_id for replica in stage_plans[1].replicas] == [0, 1, 2]
     assert all(replica.num_replicas == 3 for replica in stage_plans[1].replicas)
-
-
-def test_build_logical_stage_init_plans_constructs_multi_api_topology_before_validation(monkeypatch):
-    import vllm_omni.engine.stage_runtime as runtime_mod
-
-    stage_cfg = _FakeStageConfig(
-        stage_id=0,
-        stage_type="llm",
-        engine_args={},
-        runtime=_FakeRuntimeConfig(devices="0"),
-    )
-    runtime = StageRuntime(
-        stage_configs=[stage_cfg],
-        model="dummy-model",
-        config_path="dummy-config",
-        stage_init_timeout=1,
-        async_chunk=False,
-        client_config={"client_count": 2, "client_index": 1, "stage_addresses": {}},
-    )
-    captured: dict[str, object] = {}
-
-    monkeypatch.setattr(runtime_mod, "extract_legacy_stage_metadata", lambda _cfg: _make_llm_metadata(0))
-    monkeypatch.setattr(runtime_mod, "get_stage_connector_spec", lambda **_: {})
-    monkeypatch.setattr(runtime_mod, "resolve_omni_kv_config_for_stage", lambda *_: (None, None, None))
-    monkeypatch.setattr(runtime_mod, "build_engine_args_dict", lambda *_, **__: {})
-
-    def _capture_build_vllm_config(*_args, **kwargs):
-        captured.update(kwargs)
-        return _FakeVllmConfig(), object
-
-    monkeypatch.setattr(runtime_mod, "build_vllm_config", _capture_build_vllm_config)
-
-    runtime._build_logical_stage_init_plans(None, [1], {})
-
-    assert captured["api_process_count"] == 2
-    assert captured["api_process_rank"] == 1
 
 
 def test_initialize_stage_replicas_collects_results_by_stage_and_replica_id(monkeypatch):

@@ -63,6 +63,8 @@ def test_serve_parser_accepts_no_async_chunk_and_marks_it_explicit() -> None:
     explicit = args.get_explicit_kwargs_dict()
     assert args.get_explicit_kwargs_dict()
     assert not explicit["async_chunk"]
+    assert (args.api_server_count or 1) == 1
+    assert "api_server_count" not in explicit
 
 
 def test_serve_parser_accepts_strategy_config() -> None:
@@ -90,18 +92,6 @@ def test_serve_parser_accepts_deploy_config() -> None:
     assert args.get_explicit_kwargs_dict()["deploy_config"] == "/tmp/deploy.yaml"
 
 
-def test_serve_parser_accepts_api_server_count_for_omni() -> None:
-    parser = TrackingArgumentParser()
-    subparsers = parser.add_subparsers(dest="subcommand")
-    cmd = OmniServeCommand()
-    cmd.subparser_init(subparsers)
-
-    args = parser.parse_args(["serve", "fake-model", "--omni", "--api-server-count", "2"])
-
-    assert args.api_server_count == 2
-    assert args.get_explicit_kwargs_dict()["api_server_count"] == 2
-
-
 def test_tracking_namespace_is_picklable_for_spawned_api_workers() -> None:
     parser = TrackingArgumentParser()
     subparsers = parser.add_subparsers(dest="subcommand")
@@ -116,72 +106,20 @@ def test_tracking_namespace_is_picklable_for_spawned_api_workers() -> None:
     assert restored._omni_stage_client_configs == args._omni_stage_client_configs
 
 
-def test_serve_validate_allows_api_server_count_for_omni(mocker: MockerFixture) -> None:
+def test_serve_validate_rejects_multiple_api_servers_for_diffusion(mocker: MockerFixture) -> None:
     parser = TrackingArgumentParser()
     subparsers = parser.add_subparsers(dest="subcommand")
     cmd = OmniServeCommand()
     cmd.subparser_init(subparsers)
-    args = parser.parse_args(["serve", "fake-model", "--omni", "--api-server-count", "2"])
+    args = parser.parse_args(["serve", "fake-diffusion-model", "--omni", "--api-server-count", "2"])
 
-    mocker.patch("vllm_omni.diffusion.utils.hf_utils.is_diffusion_model", return_value=False)
-    mocker.patch("vllm_omni.entrypoints.cli.serve.validate_parsed_serve_args")
-    cmd.validate(args)
+    mocker.patch("vllm_omni.diffusion.utils.hf_utils.is_diffusion_model", return_value=True)
+    validate = mocker.patch("vllm_omni.entrypoints.cli.serve.validate_parsed_serve_args")
 
-
-def test_serve_validate_rejects_distributed_stage_with_multiple_api_servers(mocker: MockerFixture) -> None:
-    parser = TrackingArgumentParser()
-    subparsers = parser.add_subparsers(dest="subcommand")
-    cmd = OmniServeCommand()
-    cmd.subparser_init(subparsers)
-    args = parser.parse_args(
-        [
-            "serve",
-            "fake-model",
-            "--omni",
-            "--api-server-count",
-            "2",
-            "--stage-id",
-            "0",
-            "--omni-master-address",
-            "127.0.0.1",
-            "--omni-master-port",
-            "26000",
-        ]
-    )
-
-    mocker.patch("vllm_omni.diffusion.utils.hf_utils.is_diffusion_model", return_value=False)
-    mocker.patch("vllm_omni.entrypoints.cli.serve.validate_parsed_serve_args")
-
-    with pytest.raises(ValueError, match="cannot be combined with stage-based"):
+    with pytest.raises(ValueError, match="not supported for diffusion"):
         cmd.validate(args)
 
-
-def test_serve_validate_rejects_fault_tolerance_with_multiple_api_servers(mocker: MockerFixture) -> None:
-    parser = TrackingArgumentParser()
-    subparsers = parser.add_subparsers(dest="subcommand")
-    cmd = OmniServeCommand()
-    cmd.subparser_init(subparsers)
-    args = parser.parse_args(["serve", "fake-model", "--omni", "--api-server-count", "2", "--enable-fault-tolerance"])
-
-    mocker.patch("vllm_omni.diffusion.utils.hf_utils.is_diffusion_model", return_value=False)
-    mocker.patch("vllm_omni.entrypoints.cli.serve.validate_parsed_serve_args")
-
-    with pytest.raises(ValueError, match="enable-fault-tolerance"):
-        cmd.validate(args)
-
-
-def test_serve_validate_rejects_elastic_ep_with_multiple_api_servers(mocker: MockerFixture) -> None:
-    parser = TrackingArgumentParser()
-    subparsers = parser.add_subparsers(dest="subcommand")
-    cmd = OmniServeCommand()
-    cmd.subparser_init(subparsers)
-    args = parser.parse_args(["serve", "fake-model", "--omni", "--api-server-count", "2", "--enable-elastic-ep"])
-
-    mocker.patch("vllm_omni.diffusion.utils.hf_utils.is_diffusion_model", return_value=False)
-    mocker.patch("vllm_omni.entrypoints.cli.serve.validate_parsed_serve_args")
-
-    with pytest.raises(ValueError, match="enable-elastic-ep"):
-        cmd.validate(args)
+    validate.assert_not_called()
 
 
 def test_serve_validate_rejects_sleep_mode_with_multiple_api_servers(mocker: MockerFixture) -> None:
@@ -195,21 +133,6 @@ def test_serve_validate_rejects_sleep_mode_with_multiple_api_servers(mocker: Moc
     mocker.patch("vllm_omni.entrypoints.cli.serve.validate_parsed_serve_args")
 
     with pytest.raises(ValueError, match="enable-sleep-mode"):
-        cmd.validate(args)
-
-
-def test_serve_validate_rejects_runtime_lora_updates_with_multiple_api_servers(mocker: MockerFixture) -> None:
-    parser = TrackingArgumentParser()
-    subparsers = parser.add_subparsers(dest="subcommand")
-    cmd = OmniServeCommand()
-    cmd.subparser_init(subparsers)
-    args = parser.parse_args(["serve", "fake-model", "--omni", "--api-server-count", "2"])
-
-    mocker.patch("vllm_omni.diffusion.utils.hf_utils.is_diffusion_model", return_value=False)
-    mocker.patch("vllm_omni.entrypoints.cli.serve.validate_parsed_serve_args")
-    mocker.patch("vllm.envs.VLLM_ALLOW_RUNTIME_LORA_UPDATING", True)
-
-    with pytest.raises(ValueError, match="VLLM_ALLOW_RUNTIME_LORA_UPDATING"):
         cmd.validate(args)
 
 
@@ -308,13 +231,14 @@ def test_run_multi_api_server_omni_starts_workers_after_shared_engine_launch(moc
     mocker.patch("signal.signal")
     mocker.patch("vllm.entrypoints.openai.api_server.setup_server", return_value=("127.0.0.1:8000", socket))
     mocker.patch("vllm.v1.metrics.prometheus.setup_multiprocess_prometheus")
-    manager_cls = mocker.patch("vllm.v1.utils.APIServerProcessManager", return_value=manager)
+    start_manager = mocker.patch.object(serve_module, "_start_api_server_process_manager", return_value=manager)
 
     serve_module.run_multi_api_server_omni(args)
 
     assert args._omni_stage_client_configs is engine_launch.client_configs
-    manager_cls.assert_called_once()
-    manager_kwargs = manager_cls.call_args.kwargs
+    start_manager.assert_called_once()
+    manager_kwargs = start_manager.call_args.kwargs
+    assert manager_kwargs["cleanup_timeout"] == 1
     assert manager_kwargs["num_servers"] == 2
     assert manager_kwargs["input_addresses"] == ["ipc://input-0", "ipc://input-1"]
     assert manager_kwargs["target_server_fn"] is serve_module.run_omni_api_server_worker_proc
@@ -323,43 +247,39 @@ def test_run_multi_api_server_omni_starts_workers_after_shared_engine_launch(moc
     socket.close.assert_called_once_with()
 
 
-def test_wait_for_multi_api_server_completion_accepts_clean_frontend_exits(
-    mocker: MockerFixture,
-) -> None:
+def test_start_api_server_process_manager_cleans_up_partial_start(mocker: MockerFixture) -> None:
     from vllm_omni.entrypoints.cli import serve as serve_module
 
-    api_processes = [
-        _FakeProcess(sentinel="api-0", exitcode=0, name="api-0", pid=10),
-        _FakeProcess(sentinel="api-1", exitcode=0, name="api-1", pid=11),
-    ]
-    engine_process = _FakeProcess(sentinel="engine-0", exitcode=None, name="engine-0", pid=20)
-    manager = _FakeProcessOwner(processes=api_processes)
-    engine_launch = MultiApiStageEngineLaunch(
-        client_configs=[],
-        resources=[StageReplicaResources(manager=_FakeProcessOwner(processes=[engine_process]))],
-    )
-    wait = mocker.patch(
-        "multiprocessing.connection.wait",
-        side_effect=[["api-0"], ["api-1"]],
-    )
+    first_process = mocker.Mock(name="first_process")
+    second_process = mocker.Mock(name="second_process")
+    first_process.pid = 1234
+    second_process.pid = None
+    second_process.start.side_effect = RuntimeError("spawn failed")
+    parent_pipes = [mocker.Mock(name="parent_pipe_0"), mocker.Mock(name="parent_pipe_1")]
+    child_pipes = [mocker.Mock(name="child_pipe_0"), mocker.Mock(name="child_pipe_1")]
+    spawn_context = mocker.Mock()
+    spawn_context.Process.side_effect = [first_process, second_process]
+    spawn_context.Pipe.side_effect = list(zip(parent_pipes, child_pipes))
+    mocker.patch("vllm.v1.utils.multiprocessing.get_context", return_value=spawn_context)
+    shutdown = mocker.patch("vllm.v1.utils.shutdown")
 
-    serve_module._wait_for_multi_api_server_completion(manager, engine_launch)
+    with pytest.raises(RuntimeError, match="spawn failed"):
+        serve_module._start_api_server_process_manager(
+            cleanup_timeout=1.5,
+            listen_address="127.0.0.1:8000",
+            sock=mocker.Mock(),
+            args=argparse.Namespace(),
+            num_servers=2,
+            input_addresses=["ipc://input-0", "ipc://input-1"],
+            output_addresses=["ipc://output-0", "ipc://output-1"],
+            target_server_fn=mocker.Mock(),
+        )
 
-    assert wait.call_count == 2
-
-
-def test_wait_for_multi_api_server_completion_rejects_frontend_failure(
-    mocker: MockerFixture,
-) -> None:
-    from vllm_omni.entrypoints.cli import serve as serve_module
-
-    api_process = _FakeProcess(sentinel="api-0", exitcode=3, name="api-0", pid=10)
-    manager = _FakeProcessOwner(processes=[api_process])
-    engine_launch = MultiApiStageEngineLaunch(client_configs=[], resources=[])
-    mocker.patch("multiprocessing.connection.wait", return_value=["api-0"])
-
-    with pytest.raises(RuntimeError, match=r"API server process api-0 .* exited with code 3"):
-        serve_module._wait_for_multi_api_server_completion(manager, engine_launch)
+    first_process.start.assert_called_once_with()
+    second_process.start.assert_called_once_with()
+    for pipe in parent_pipes:
+        pipe.close.assert_called_once_with()
+    shutdown.assert_called_once_with([first_process], timeout=1.5)
 
 
 def test_wait_for_multi_api_server_completion_rejects_engine_failure(

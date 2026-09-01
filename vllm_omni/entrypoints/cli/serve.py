@@ -11,6 +11,7 @@ diffusion models (e.g., Qwen-Image) through the same CLI interface.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import math
 import os
@@ -239,6 +240,8 @@ class OmniServeCommand(CLISubcommand):
 
         model = getattr(args, "model_tag", None) or getattr(args, "model", None)
         if model and is_diffusion_model(model):
+            if api_server_count is not None and api_server_count > 1:
+                raise ValueError("--api-server-count > 1 is not supported for diffusion models")
             logger.info("Detected diffusion model: %s", model)
             return
         validate_parsed_serve_args(args)
@@ -1058,11 +1061,45 @@ def _wait_for_multi_api_server_completion(
                 )
 
 
+def _start_api_server_process_manager(
+    *,
+    cleanup_timeout: float,
+    **manager_kwargs: object,
+) -> APIServerProcessManager:
+    """Construct vLLM's manager with rollback for a partial ``__init__``.
+
+    ``APIServerProcessManager`` starts workers one by one in ``__init__`` and
+    installs its finalizer only after every ``Process.start`` succeeds. Keep a
+    reference to the partially initialized object so workers started before a
+    later failure are still terminated.
+    """
+    from vllm.v1.utils import APIServerProcessManager, shutdown
+
+    manager = APIServerProcessManager.__new__(APIServerProcessManager)
+    try:
+        APIServerProcessManager.__init__(manager, **manager_kwargs)
+    except BaseException:
+        try:
+            for pipe in getattr(manager, "_address_pipes", ()):
+                with contextlib.suppress(Exception):
+                    pipe.close()
+            # A Process whose start() raised is still present in the upstream
+            # manager's list, but calling is_alive() on it raises because it
+            # has no Popen object. Only hand successfully started children to
+            # vLLM's shutdown helper.
+            started_processes = [process for process in getattr(manager, "processes", ()) if process.pid is not None]
+            if started_processes:
+                shutdown(started_processes, timeout=cleanup_timeout)
+        except Exception:
+            logger.exception("Failed to clean up partially started API server processes")
+        raise
+    return manager
+
+
 def run_multi_api_server_omni(args: TrackingNamespace) -> None:
     """Launch API subprocesses that share one set of local stage engines."""
     from vllm.entrypoints.openai.api_server import setup_server
     from vllm.v1.metrics.prometheus import setup_multiprocess_prometheus
-    from vllm.v1.utils import APIServerProcessManager
 
     num_api_servers = int(args.api_server_count)
     if num_api_servers < 2:
@@ -1092,7 +1129,9 @@ def run_multi_api_server_omni(args: TrackingNamespace) -> None:
             primary_addresses = engine_launch.resources[0].addresses
             if primary_addresses is None:
                 raise RuntimeError("Primary stage engine returned no addresses")
-            api_server_manager = APIServerProcessManager(
+            timeout = float(getattr(args, "shutdown_timeout", 5) or 5)
+            api_server_manager = _start_api_server_process_manager(
+                cleanup_timeout=timeout,
                 listen_address=listen_address,
                 sock=sock,
                 args=args,

@@ -1945,25 +1945,20 @@ class OmniOpenAIServingSpeech(OpenAIServing, AudioMixin):
             wav_np, fetched_sr = await self._media_connector.fetch_audio_async(ref_audio_str)
             fetch_decode_ms = (time.perf_counter() - fetch_start_s) * 1000.0
             tolist_start_s = time.perf_counter()
-            resolved_wav_list, sr, artifact_key, duration = await asyncio.to_thread(
-                self._finalize_fetched_ref_audio,
-                wav_np,
-                fetched_sr,
-            )
-            wav_list = resolved_wav_list
+            wav_list, sr, artifact_key, duration = self._finalize_fetched_ref_audio(wav_np, fetched_sr)
             tolist_ms = (time.perf_counter() - tolist_start_s) * 1000.0
             logger.debug(
                 "Resolved ref_audio: fetch_decode_ms=%.3f tolist_ms=%.3f samples=%d sr=%d duration_s=%.3f",
                 fetch_decode_ms,
                 tolist_ms,
-                len(resolved_wav_list),
+                len(wav_list),
                 sr,
                 duration,
             )
             post_key = await self._ref_audio_cache_key(ref_audio_str, allowed_path)
             if post_key == cache_key:
-                self._put_resolved_ref_audio(cache_key, resolved_wav_list, sr, artifact_key)
-                return resolved_wav_list, sr, cache_key
+                self._put_resolved_ref_audio(cache_key, wav_list, sr, artifact_key)
+                return wav_list, sr, cache_key
             logger.debug(
                 "ref_audio metadata changed during fetch (attempt %d/%d); retrying",
                 attempt + 1,
@@ -2330,7 +2325,7 @@ class OmniOpenAIServingSpeech(OpenAIServing, AudioMixin):
                     )
                     if first_audio_chunk_s is None:
                         first_audio_chunk_s = time.perf_counter()
-                    audio_bytes = (await asyncio.to_thread(self.create_audio, audio_obj)).audio_data
+                    audio_bytes = self.create_audio(audio_obj).audio_data
                     if include_sample_rate:
                         yield audio_bytes, output_sample_rate
                     else:
@@ -3406,7 +3401,7 @@ class OmniOpenAIServingSpeech(OpenAIServing, AudioMixin):
                 speed=self._audio_encode_speed(request),
                 base64_encode=base64_encode,
             )
-            audio_response: AudioResponse = await asyncio.to_thread(self.create_audio, audio_obj)
+            audio_response: AudioResponse = self.create_audio(audio_obj)
             self._mark_ref_audio_artifact_ready_for_request(request_id)
             artifact_ready = True
             if usage_out is not None:
@@ -3537,7 +3532,7 @@ class OmniOpenAIServingSpeech(OpenAIServing, AudioMixin):
                 speed=self._audio_encode_speed(request),
                 base64_encode=False,
             )
-            audio_response: AudioResponse = await asyncio.to_thread(self.create_audio, audio_obj)
+            audio_response: AudioResponse = self.create_audio(audio_obj)
             return Response(content=audio_response.audio_data, media_type=audio_response.media_type)
 
         except asyncio.CancelledError:

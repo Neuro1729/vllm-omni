@@ -4,16 +4,6 @@ This directory contains benchmark suites for evaluating different model families
 
 ## Benchmark families
 
-### [API frontend scaling](frontend/README.md) — Multimodal preprocessing
-
-Synthetic video-chat serving benchmark for comparing one or more API frontend
-processes while keeping a shared set of stage engines fixed.
-
-- **Layout**: `frontend/benchmark_multimodal_frontend.py`
-- **Workload**: deterministic unique MP4 inputs with configurable resolution,
-  frame count, concurrency, and repetitions
-- **Key metrics**: request throughput, latency percentiles, completion count
-
 ### [TTS](tts/README.md) — Text-to-Speech
 
 Model-agnostic serving benchmarks for TTS models, including Qwen3-TTS and VoxCPM2.

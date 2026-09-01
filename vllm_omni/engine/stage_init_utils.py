@@ -1450,8 +1450,9 @@ def build_vllm_config(
         )
 
     filtered_engine_args_dict = filter_dataclass_kwargs(OmniEngineArgs, engine_args_dict)
-    filtered_engine_args_dict["_api_process_count"] = api_process_count
-    filtered_engine_args_dict["_api_process_rank"] = api_process_rank
+    if api_process_count != 1 or api_process_rank != 0:
+        filtered_engine_args_dict["_api_process_count"] = api_process_count
+        filtered_engine_args_dict["_api_process_rank"] = api_process_rank
 
     # _to_dict serializes dataclass fields (e.g. StructuredOutputsConfig) into
     # plain dicts.  When OmniEngineArgs is instantiated with the dict, these

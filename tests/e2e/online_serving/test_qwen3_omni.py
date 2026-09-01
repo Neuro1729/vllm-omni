@@ -7,7 +7,6 @@ E2E Online tests for Qwen3-Omni model with video input and audio output.
 
 import os
 
-import psutil
 import pytest
 
 from tests.helpers.mark import hardware_test
@@ -46,17 +45,6 @@ test_params = [
             ],
         ),
         id="default",
-    )
-]
-
-multi_api_params = [
-    pytest.param(
-        OmniServerParams(
-            model=_MODEL,
-            stage_config_path=_CI_DEPLOY,
-            server_args=["--no-async-chunk", "--api-server-count", "2"],
-        ),
-        id="two-api-frontends-shared-engines",
     )
 ]
 
@@ -156,38 +144,6 @@ def test_text_to_text_001(omni_server, online_client) -> None:
     }
 
     online_client.send_omni_request(request_config, request_num=get_max_batch_size())
-
-
-@pytest.mark.advanced_model
-@pytest.mark.core_model
-@pytest.mark.omni
-@hardware_test(res={"cuda": "H100"}, num_cards=2)
-@pytest.mark.parametrize("omni_server", multi_api_params, indirect=True)
-def test_two_api_frontends_share_one_stage_engine_topology(omni_server, online_client) -> None:
-    """Exercise the production multi-process CLI path without mocking workers or engines."""
-    messages = dummy_messages_from_mix_data(system_prompt=get_system_prompt(), content_text=get_prompt())
-    request_config = {
-        "model": omni_server.model,
-        "messages": messages,
-        "stream": False,
-        "modalities": ["text"],
-        "key_words": {"text": ["beijing"]},
-    }
-
-    online_client.send_omni_request(request_config, request_num=4)
-
-    assert omni_server.proc is not None
-    descriptors: list[str] = []
-    for process in psutil.Process(omni_server.proc.pid).children(recursive=True):
-        try:
-            descriptors.append(f"{process.name()} {' '.join(process.cmdline())}".lower())
-        except (psutil.AccessDenied, psutil.NoSuchProcess):
-            continue
-
-    api_workers = [descriptor for descriptor in descriptors if "apiserver" in descriptor]
-    stage_engines = [descriptor for descriptor in descriptors if "stageenginecore" in descriptor]
-    assert len(api_workers) == 2, descriptors
-    assert len(stage_engines) == 3, descriptors
 
 
 def _run_prefix_cache_check(online_client, request_config: dict):

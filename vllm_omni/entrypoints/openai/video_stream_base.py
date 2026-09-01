@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: Copyright contributors to the vLLM-Omni project
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 """Base WebSocket handler for streaming video input understanding.
 
 Shared session loop, frame/audio buffering, EVS pre-filter, prewarm,
@@ -377,13 +377,13 @@ class OmniStreamingVideoHandler:
                             await self._send_error(websocket, "Frame too large")
                             continue
                         try:
-                            raw_bytes = await asyncio.to_thread(base64.b64decode, frame_data, validate=True)
+                            raw_bytes = base64.b64decode(frame_data, validate=True)
                         except Exception:
                             await self._send_error(websocket, "Invalid image data")
                             continue
                         if frame_filter is not None:
                             try:
-                                if not await asyncio.to_thread(frame_filter.should_retain, raw_bytes):
+                                if not frame_filter.should_retain(raw_bytes):
                                     await self._send_frame_ack(
                                         websocket,
                                         msg,
@@ -459,7 +459,7 @@ class OmniStreamingVideoHandler:
                     elif msg_type == "audio.chunk":
                         data_b64 = msg.get("data", "")
                         try:
-                            pcm_bytes = await asyncio.to_thread(base64.b64decode, data_b64)
+                            pcm_bytes = base64.b64decode(data_b64)
                         except Exception:
                             continue
                         if len(audio_buffer) + len(pcm_bytes) > _MAX_AUDIO_BUFFER_BYTES:
@@ -473,7 +473,7 @@ class OmniStreamingVideoHandler:
                         audio_data_b64 = msg.get("audio_data")
                         if audio_data_b64:
                             try:
-                                decoded = await asyncio.to_thread(base64.b64decode, audio_data_b64)
+                                decoded = base64.b64decode(audio_data_b64)
                                 if len(audio_buffer) + len(decoded) <= _MAX_AUDIO_BUFFER_BYTES:
                                     audio_buffer.extend(decoded)
                                 else:
@@ -742,8 +742,7 @@ class OmniStreamingVideoHandler:
                         t_first_audio = _time.monotonic()
                     audio_chunk_count += 1
                     if streaming:
-                        b64, audio_chunks_drained = await asyncio.to_thread(
-                            self._extract_audio_delta_b64,
+                        b64, audio_chunks_drained = self._extract_audio_delta_b64(
                             output,
                             audio_chunks_drained,
                         )

@@ -1,11 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: Copyright contributors to the vLLM-Omni project
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 """Unit tests for VideoStreamSession (Phase 2 + 3)."""
 
 from __future__ import annotations
-
-import base64
-import json
 
 import pytest
 
@@ -293,59 +290,3 @@ class TestBuildChatRequest:
         session.clear_audio()
         assert session.has_audio is False
         assert session.frame_count == 1
-
-
-class TestVideoStreamHandlerScheduling:
-    @pytest.mark.asyncio
-    async def test_frame_decode_and_request_build_run_off_event_loop(self, mocker):
-        from vllm_omni.entrypoints.openai.video_stream_session import VideoStreamHandler
-
-        frame = base64.b64encode(make_jpeg()).decode("ascii")
-        messages = [
-            {"type": "session.config", "model": "test-model", "evs_enabled": False},
-            {"type": "video.frame", "data": frame},
-            {"type": "video.query", "text": "Describe this."},
-            {"type": "video.done"},
-        ]
-
-        class FakeWebSocket:
-            def __init__(self):
-                self.sent: list[dict] = []
-
-            async def accept(self):
-                return None
-
-            async def receive_text(self):
-                return json.dumps(messages.pop(0))
-
-            async def send_json(self, value):
-                self.sent.append(value)
-
-        class FakeChatHandler:
-            async def create_chat_completion(self, request, raw_request=None):
-                assert request.model == "test-model"
-                assert len(request.messages[0]["content"]) == 2
-
-                async def response_stream():
-                    yield 'data: {"choices":[{"delta":{"content":"ok"}}]}\n\n'
-
-                return response_stream()
-
-        calls: list[str] = []
-
-        async def direct_to_thread(function, *args, **kwargs):
-            calls.append(function.__name__)
-            return function(*args, **kwargs)
-
-        mocker.patch(
-            "vllm_omni.entrypoints.openai.video_stream_session.asyncio.to_thread",
-            new=direct_to_thread,
-        )
-
-        websocket = FakeWebSocket()
-        await VideoStreamHandler(FakeChatHandler()).handle_session(websocket)
-
-        assert "b64decode" in calls
-        assert "add_frame" in calls
-        assert "build_chat_request" in calls
-        assert websocket.sent[-1] == {"type": "session.done"}

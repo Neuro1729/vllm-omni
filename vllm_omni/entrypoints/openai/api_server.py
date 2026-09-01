@@ -12,6 +12,7 @@ import os
 
 # Image generation API imports
 import random
+import signal
 import socket
 import tempfile
 import time
@@ -106,6 +107,7 @@ from vllm.v1.engine.exceptions import EngineDeadError, EngineGenerateError
 
 from vllm_omni.config.endpoint_policy import shutdown_unsupported_routes
 from vllm_omni.diffusion.models.interface import ReferenceVideoDecodeSpec
+from vllm_omni.engine.stage_init_utils import set_death_signal
 from vllm_omni.entrypoints.async_omni import AsyncOmni
 from vllm_omni.entrypoints.openai.batch_serving import OmniOpenAIServingChatBatch
 from vllm_omni.entrypoints.openai.duplex_capability import should_enable_duplex_endpoint
@@ -491,6 +493,7 @@ def run_omni_api_server_worker_proc(
     **uvicorn_kwargs: object,
 ) -> None:
     """Entrypoint used by vLLM's API server process manager."""
+    set_death_signal(signal.SIGTERM)
     manager_config = client_config or {}
     client_index = int(manager_config.get("client_index", 0))
     all_client_configs = getattr(args, "_omni_stage_client_configs", None)
@@ -643,6 +646,7 @@ async def omni_run_server_worker(
                 if scope["type"] == "http":
                     scope.setdefault("state", {})
                     scope["state"]["request_timestamp"] = time.time()
+
                 await self._inner(scope, receive, send)
 
         shutdown_task = await serve_http(
