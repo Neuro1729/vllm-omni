@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM-Omni project
 """Video streaming session manager and WebSocket handler.
 
 Provides ``VideoStreamConfig``, ``VideoStreamSession`` (frame/audio buffer
@@ -274,12 +274,12 @@ class VideoStreamHandler:
                     if msg_type == "video.frame":
                         data_b64 = msg.get("data", "")
                         try:
-                            jpeg_bytes = base64.b64decode(data_b64)
+                            jpeg_bytes = await asyncio.to_thread(base64.b64decode, data_b64)
                         except Exception:
                             await self._send_error(websocket, "Invalid base64 in video.frame")
                             continue
                         try:
-                            session.add_frame(jpeg_bytes)
+                            await asyncio.to_thread(session.add_frame, jpeg_bytes)
                         except ValueError as exc:
                             await self._send_error(websocket, str(exc))
                             continue
@@ -380,7 +380,7 @@ class VideoStreamHandler:
             )
             return
 
-        request = session.build_chat_request(query_text)
+        request = await asyncio.to_thread(session.build_chat_request, query_text)
         await websocket.send_json({"type": "response.start"})
 
         # After response.start, the protocol contract requires us to always

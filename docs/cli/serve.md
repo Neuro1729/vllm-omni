@@ -1,5 +1,24 @@
 # vllm-omni serve
 
+## Multiple API frontends
+
+For local multi-stage EngineCore deployments, `--api-server-count` starts
+multiple API frontend processes that share one parent-owned set of stage
+engines:
+
+```bash
+vllm serve Qwen/Qwen3-Omni-30B-A3B-Instruct --omni \
+    --api-server-count 2 \
+    --port 8091
+```
+
+This mode is intended for workloads whose request parsing, multimodal input
+processing, or response encoding can bottleneck a single frontend. It
+currently requires local multi-process EngineCore stages with one local
+process group per stage. It cannot be combined with diffusion, headless or
+remote stages, intra-stage data parallelism, Ray, fault tolerance, elastic
+expert parallelism, or runtime LoRA updating.
+
 ## Stage-based CLI quickstart
 
 The stage-based CLI is designed for deployments that require launching each pipeline stage in an isolated process

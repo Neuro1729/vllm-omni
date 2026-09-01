@@ -43,6 +43,7 @@ from __future__ import annotations
 import asyncio
 import json
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from types import SimpleNamespace
 
 import pytest
@@ -57,6 +58,63 @@ from vllm.v1.engine.exceptions import EngineDeadError, EngineGenerateError
 from vllm_omni.entrypoints.openai import api_server
 
 pytestmark = [pytest.mark.core_model, pytest.mark.cpu]
+
+
+@dataclass
+class _FakeParallelConfig:
+    _api_process_rank: int
+
+
+@dataclass
+class _FakeVllmConfig:
+    parallel_config: _FakeParallelConfig
+
+
+def test_omni_api_worker_rejects_invalid_client_index(mocker):
+    args = _minimal_args(_omni_stage_client_configs=[{"stage_addresses": {}}])
+    socket = mocker.Mock()
+
+    with pytest.raises(RuntimeError, match="client configuration"):
+        api_server.run_omni_api_server_worker_proc(
+            "127.0.0.1:8000",
+            socket,
+            args,
+            {"client_count": 2, "client_index": -1},
+        )
+
+
+@pytest.mark.asyncio
+async def test_omni_run_server_worker_forwards_client_config(monkeypatch):
+    captured: dict[str, object] = {}
+
+    @asynccontextmanager
+    async def fake_build_async_omni(*_args, **kwargs):
+        captured.update(kwargs)
+        yield _FakeEngineClient(vllm_config=_FakeVllmConfig(_FakeParallelConfig(_api_process_rank=1)))
+
+    monkeypatch.setattr(api_server, "build_async_omni", fake_build_async_omni)
+    monkeypatch.setattr(api_server, "build_openai_app", lambda *_args: FastAPI())
+    monkeypatch.setattr(api_server, "omni_init_app_state", lambda *_args: asyncio.sleep(0))
+    monkeypatch.setattr(api_server, "shutdown_unsupported_routes", lambda *_args: None)
+
+    async def fake_storage_start() -> None:
+        return None
+
+    monkeypatch.setattr(api_server.STORAGE_MANAGER, "start", fake_storage_start)
+
+    async def fake_serve_http(*_args, **_kwargs):
+        task = asyncio.create_task(asyncio.sleep(0))
+        await asyncio.sleep(0)
+        return task
+
+    monkeypatch.setattr(api_server, "serve_http", fake_serve_http)
+
+    args = _minimal_args(model="dummy")
+    config = {"client_count": 2, "client_index": 1, "stage_addresses": {}}
+
+    await api_server.omni_run_server_worker("127.0.0.1:8000", _FakeSocket(), args, config)
+    assert captured["client_config"] is config
+
 
 # FastAPI/Starlette auto-adds HEAD on every GET route. Including HEAD here
 # would invent ("HEAD", path) entries for every GET and fail the current census.

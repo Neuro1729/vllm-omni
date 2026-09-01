@@ -2,6 +2,7 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM-Omni project
 import asyncio
 import base64
+import copy
 import dataclasses
 import io
 import json
@@ -11,6 +12,7 @@ import os
 
 # Image generation API imports
 import random
+import socket
 import tempfile
 import time
 from argparse import Namespace
@@ -23,6 +25,7 @@ from typing import Annotated, Any, Literal, cast
 
 import httpx
 import numpy as np
+import uvloop
 import vllm.envs as envs
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile, WebSocket
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
@@ -98,7 +101,7 @@ from vllm.renderers.online_renderer import OnlineRenderer
 from vllm.tasks import POOLING_TASKS
 from vllm.tool_parsers import ToolParserManager
 from vllm.utils import random_uuid
-from vllm.utils.system_utils import decorate_logs
+from vllm.utils.system_utils import decorate_logs, set_process_title
 from vllm.v1.engine.exceptions import EngineDeadError, EngineGenerateError
 
 from vllm_omni.config.endpoint_policy import shutdown_unsupported_routes
@@ -480,7 +483,52 @@ async def omni_run_server(args, **uvicorn_kwargs) -> None:
     await omni_run_server_worker(listen_address, sock, args, **uvicorn_kwargs)
 
 
-async def omni_run_server_worker(listen_address, sock, args, client_config=None, **uvicorn_kwargs) -> None:
+def run_omni_api_server_worker_proc(
+    listen_address: str,
+    sock: socket.socket,
+    args: TrackingNamespace,
+    client_config: dict[str, Any] | None = None,
+    **uvicorn_kwargs: Any,
+) -> None:
+    """Entrypoint used by vLLM's API server process manager."""
+    manager_config = client_config or {}
+    client_index = int(manager_config.get("client_index", 0))
+    all_client_configs = getattr(args, "_omni_stage_client_configs", None)
+    if not all_client_configs or not 0 <= client_index < len(all_client_configs):
+        raise RuntimeError(f"Missing Omni stage client configuration for API server {client_index}")
+
+    omni_client_config = copy.deepcopy(all_client_configs[client_index])
+    omni_client_config["client_count"] = int(manager_config.get("client_count", 1))
+    omni_client_config["client_index"] = client_index
+
+    stage_addresses = omni_client_config["stage_addresses"]
+    first_stage_id = min(stage_addresses)
+    first_replica_id = min(stage_addresses[first_stage_id])
+    first_addresses = stage_addresses[first_stage_id][first_replica_id]
+    for key in ("input_address", "output_address", "actual_address_pipe", "tensor_queue"):
+        if key in manager_config:
+            first_addresses[key] = manager_config[key]
+
+    set_process_title("APIServer", str(client_index))
+    decorate_logs("APIServer", skip_if_decorated=True)
+    uvloop.run(
+        omni_run_server_worker(
+            listen_address,
+            sock,
+            args,
+            client_config=omni_client_config,
+            **uvicorn_kwargs,
+        )
+    )
+
+
+async def omni_run_server_worker(
+    listen_address: str,
+    sock: socket.socket,
+    args: TrackingNamespace,
+    client_config: dict[str, Any] | None = None,
+    **uvicorn_kwargs: Any,
+) -> None:
     """Run a single API server worker."""
 
     if args.tool_parser_plugin and len(args.tool_parser_plugin) > 3:
@@ -667,6 +715,7 @@ async def build_async_omni(
     async with build_async_omni_from_stage_config(
         args,
         disable_frontend_multiprocessing=disable_frontend_multiprocessing,
+        client_config=client_config,
     ) as async_omni:
         yield async_omni
 
@@ -676,6 +725,7 @@ async def build_async_omni_from_stage_config(
     args: TrackingNamespace,
     *,
     disable_frontend_multiprocessing: bool = False,
+    client_config: dict[str, Any] | None = None,
 ) -> AsyncIterator[EngineClient]:
     """Create AsyncOmni from stage configuration.
 
@@ -730,6 +780,8 @@ async def build_async_omni_from_stage_config(
         kwargs = args.get_explicit_kwargs_dict()
         model = kwargs.pop("model", None) or args.model
         kwargs.setdefault("log_stats", not args.disable_log_stats)
+        if client_config is not None:
+            kwargs["client_config"] = client_config
         async_omni = AsyncOmni(model=model, **kwargs)
 
         # # Don't keep the dummy data in memory

@@ -2150,7 +2150,13 @@ class OmniOpenAIServingChat(OpenAIServingChat, AudioMixin):
                         )
 
                     role = self.get_chat_request_role(request)
-                    choices_data = self._create_audio_choice(omni_res, role, request, stream=True)
+                    choices_data = await asyncio.to_thread(
+                        self._create_audio_choice,
+                        omni_res,
+                        role,
+                        request,
+                        True,
+                    )
                     if isinstance(choices_data, ErrorResponse):
                         logger.error(
                             "Skipping audio chunk for request %s: %s",
@@ -2435,7 +2441,13 @@ class OmniOpenAIServingChat(OpenAIServingChat, AudioMixin):
                         )
                     ]
             elif omni_outputs.final_output_type == "audio":
-                choices_data = self._create_audio_choice(omni_outputs, role, request, stream=False)
+                choices_data = await asyncio.to_thread(
+                    self._create_audio_choice,
+                    omni_outputs,
+                    role,
+                    request,
+                    False,
+                )
                 if isinstance(choices_data, ErrorResponse):
                     return choices_data
             elif omni_outputs.final_output_type == "image":

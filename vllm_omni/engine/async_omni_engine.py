@@ -121,6 +121,7 @@ class AsyncOmniEngine:
     _transfer_emitter: Any = None
     _prom_metrics: Any = None
     _enable_orch_monitor: bool = False
+    _client_config: dict[str, Any] | None = None
     # Lazily created by get_output_blocking_async().
     _output_drain_executor: concurrent.futures.ThreadPoolExecutor | None = None
 
@@ -135,6 +136,7 @@ class AsyncOmniEngine:
         log_stats: bool = False,
         tokenizer: str | None = None,
         trust_remote_code: bool | None = None,
+        client_config: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
         self.model = model
@@ -154,6 +156,7 @@ class AsyncOmniEngine:
         # --log-stats CLI flag set by the user via OmniBase.
         self._log_stats = log_stats
         self._enable_orch_monitor = bool(kwargs.pop("enable_orch_monitor", False))
+        self._client_config = client_config
 
         logger.info(f"[AsyncOmniEngine] Initializing with model {model}")
 
@@ -165,6 +168,8 @@ class AsyncOmniEngine:
         _stage_id_kwarg = kwargs.get("stage_id")
         if isinstance(_stage_id_kwarg, int) and not single_stage_mode:
             single_stage_mode = True
+        if client_config is not None and int(client_config.get("client_count", 1)) > 1 and single_stage_mode:
+            raise ValueError("Multiple API servers cannot be combined with single-stage distributed mode")
 
         self.single_stage_mode: bool = single_stage_mode
         self._single_stage_id_filter: int | None = (
@@ -328,6 +333,7 @@ class AsyncOmniEngine:
             omni_lb_policy=self._omni_lb_policy,
             request_queue=self.request_queue,
             log_stats=self._log_stats,
+            client_config=self._client_config,
         )
         self._runtime.initialize()
 

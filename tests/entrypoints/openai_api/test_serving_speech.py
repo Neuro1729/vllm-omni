@@ -32,6 +32,7 @@ from vllm_omni.entrypoints.openai import api_server as api_server_module
 from vllm_omni.entrypoints.openai import serving_speech as serving_speech_module
 from vllm_omni.entrypoints.openai.audio_utils_mixin import AudioMixin
 from vllm_omni.entrypoints.openai.protocol.audio import (
+    AudioResponse,
     BatchSpeechRequest,
     CreateAudio,
     OpenAICreateAudioGenerateRequest,
@@ -874,6 +875,33 @@ class TestTTSMethods:
         audio_obj = create_audio.call_args.args[0]
         assert isinstance(audio_obj, CreateAudio)
         assert audio_obj.speed == 1.0
+
+    @pytest.mark.asyncio
+    async def test_non_streaming_audio_encoding_runs_off_event_loop(
+        self,
+        speech_server,
+        mocker: MockerFixture,
+    ):
+        async def mock_generate():
+            yield create_mock_audio_output_for_test()
+
+        mocker.patch.object(
+            speech_server,
+            "_prepare_speech_generation",
+            new=mocker.AsyncMock(return_value=("speech-encode", mock_generate(), {})),
+        )
+        encoded = AudioResponse(audio_data=b"dummy", media_type="audio/wav")
+        to_thread = mocker.patch(
+            "vllm_omni.entrypoints.openai.serving_speech.asyncio.to_thread",
+            new=mocker.AsyncMock(return_value=encoded),
+        )
+
+        result = await speech_server._generate_audio_bytes(OpenAICreateSpeechRequest(input="Hello"))
+
+        assert result == (b"dummy", "audio/wav")
+        to_thread.assert_awaited_once()
+        assert callable(to_thread.await_args.args[0])
+        assert isinstance(to_thread.await_args.args[1], CreateAudio)
 
     def test_is_tts_detection_with_tts_stage(self, mocker: MockerFixture):
         """Test TTS model detection when TTS stage exists."""
