@@ -337,8 +337,8 @@ class StageRuntime:
             for parallel_config in parallel_configs
         ):
             raise ValueError(
-                "--api-server-count > 1 currently supports one local process group per stage; "
-                "intra-stage data parallelism and Ray backends are not supported"
+                "--api-server-count > 1 currently supports one local process group per replica; "
+                "intra-replica data parallelism and Ray backends are not supported"
             )
 
         client_configs: list[dict[str, Any]] = [

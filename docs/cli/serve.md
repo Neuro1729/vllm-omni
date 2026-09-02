@@ -15,7 +15,8 @@ vllm serve Qwen/Qwen3-Omni-30B-A3B-Instruct --omni \
 This mode is intended for workloads whose request parsing, multimodal input
 processing, or response encoding can bottleneck a single frontend. It
 currently requires local multi-process EngineCore stages with one local
-process group per stage. It cannot be combined with diffusion, headless or
+process group per replica. A stage may still use multiple `num_replicas`.
+It cannot be combined with diffusion, headless or
 remote stages, intra-stage data parallelism, Ray, fault tolerance, elastic
 expert parallelism, sleep mode, or runtime LoRA updating. Runtime voice upload
 and deletion are also disabled because those mutations are process-local;

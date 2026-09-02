@@ -23,8 +23,9 @@ vllm serve Qwen/Qwen3-Omni-30B-A3B-Instruct --omni \
 ```
 
 This mode supports local EngineCore stages with one local process group per
-stage. Headless, remote, diffusion, intra-stage data-parallel, and Ray stage
-deployments remain single-frontend.
+replica, including stages configured with multiple `num_replicas`. Headless,
+remote, diffusion, intra-replica data-parallel, and Ray stage deployments
+remain single-frontend.
 
 The default deployment configuration situated at `vllm_omni/deploy/qwen3_omni_moe.yaml` is resolved and loaded
 automatically via the model registry, obviating the necessity for the `--deploy-config` flag in standard deployment topologies.
