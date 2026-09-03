@@ -83,6 +83,37 @@ class _MiniMaxH3ChunkDecodeCoordinator:
         self._sources_validated = False
 
     @staticmethod
+    def _build_execution_signature(
+        latent: torch.Tensor,
+        plan: MiniMaxH3TemporalDecodePlan,
+    ) -> tuple[int, ...]:
+        """Describe every shape and plan field used by the temporal schedule."""
+
+        dtype_codes: dict[torch.dtype | None, int] = {
+            None: 0,
+            torch.float16: 1,
+            torch.bfloat16: 2,
+            torch.float32: 3,
+            torch.float64: 4,
+        }
+        return (
+            # Keep the layout versioned so adding a field cannot silently make
+            # an older and newer worker appear compatible.
+            1,
+            *[int(size) for size in latent.shape],
+            dtype_codes.get(latent.dtype, -1),
+            *[int(size) for size in plan.latent.shape],
+            dtype_codes.get(plan.latent.dtype, -1),
+            int(plan.num_chunks),
+            int(plan.total_frames),
+            int(plan.pad_frames),
+            int(plan.output_frames),
+            len(plan.chunk_frames),
+            *[int(frame_count) for frame_count in plan.chunk_frames],
+            dtype_codes.get(plan.temporal_dtype, -1),
+        )
+
+    @staticmethod
     def _is_output_rank(
         chunk_callback: MiniMaxH3VideoChunkCallback | None,
         *,
@@ -140,6 +171,7 @@ class _MiniMaxH3ChunkDecodeCoordinator:
     def _synchronize_preflight_error(
         preflight_error: Exception | None,
         temporal_dtype: torch.dtype | None,
+        execution_signature: tuple[int, ...] | None,
         *,
         group: dist.ProcessGroup | None,
         device: torch.device,
@@ -171,6 +203,44 @@ class _MiniMaxH3ChunkDecodeCoordinator:
             dist.all_reduce(lowest, op=dist.ReduceOp.MIN, group=group)
             dist.all_reduce(highest, op=dist.ReduceOp.MAX, group=group)
             if int(lowest.item()) == int(highest.item()) and int(lowest.item()) >= 0:
+                if execution_signature is None:
+                    raise RuntimeError("MiniMax-H3 temporal decode preflight produced no execution signature")
+
+                # The plan length is shape-dependent, so first agree on a
+                # common tensor size and then compare the complete signatures.
+                # This keeps all ranks in tensor collectives and catches a
+                # schedule mismatch before entering the decoder's collectives.
+                signature_length = torch.tensor(
+                    [len(execution_signature)],
+                    dtype=torch.int64,
+                    device=device,
+                )
+                max_signature_length = signature_length.clone()
+                dist.all_reduce(
+                    max_signature_length,
+                    op=dist.ReduceOp.MAX,
+                    group=group,
+                )
+                padded_signature = torch.full(
+                    (int(max_signature_length.item()),),
+                    -2,
+                    dtype=torch.int64,
+                    device=device,
+                )
+                padded_signature[: len(execution_signature)] = torch.tensor(
+                    execution_signature,
+                    dtype=torch.int64,
+                    device=device,
+                )
+                gathered_signatures = [
+                    torch.empty_like(padded_signature)
+                    for _ in range(dist.get_world_size(group))
+                ]
+                dist.all_gather(gathered_signatures, padded_signature, group=group)
+                if any(not torch.equal(padded_signature, peer) for peer in gathered_signatures):
+                    raise MiniMaxH3ChunkedDecodeUnsupportedError(
+                        "MiniMax-H3 VAE ranks built incompatible temporal decode plans"
+                    )
                 return
             raise MiniMaxH3ChunkedDecodeUnsupportedError(
                 "MiniMax-H3 VAE ranks selected incompatible temporal concat dtypes"
@@ -215,6 +285,7 @@ class _MiniMaxH3ChunkDecodeCoordinator:
         self._synchronize_preflight_error(
             preflight_error,
             plan.temporal_dtype if plan is not None else None,
+            self._build_execution_signature(latent, plan) if plan is not None else None,
             group=group,
             device=latent.device,
         )

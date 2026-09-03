@@ -769,6 +769,55 @@ def _distributed_worker(
         dist.destroy_process_group()
 
 
+def _mismatched_plan_worker(
+    rank: int,
+    init_file: str,
+    result_queue: Any,
+) -> None:
+    dist.init_process_group(
+        "gloo",
+        init_method=f"file://{init_file}",
+        rank=rank,
+        world_size=2,
+    )
+    try:
+        vae_module.get_data_parallel_world_size = lambda: 1
+        vae_module.model_parallel_is_initialized = lambda: True
+        _install_released_source_fingerprint()
+
+        vae, model = _compat_vae(
+            37 if rank == 0 else 62,
+            parallel_size=2,
+            collective=True,
+        )
+        vae._native_parallel_state = MethodType(
+            lambda self: {"sp_process_group": dist.group.WORLD},
+            vae,
+        )
+        try:
+            vae.decode_latent_with_chunks(
+                _latent(37 if rank == 0 else 62),
+                (lambda *args, **kwargs: None) if rank == 0 else None,
+            )
+        except BaseException as exc:  # noqa: BLE001
+            failure_type = type(exc).__name__
+        else:
+            failure_type = "none"
+
+        recovery = torch.tensor([rank + 1], dtype=torch.int32)
+        dist.all_reduce(recovery)
+        result_queue.put(
+            {
+                "rank": rank,
+                "failure_type": failure_type,
+                "adaptive_calls": model.adaptive_decode_calls,
+                "recovery": int(recovery.item()),
+            }
+        )
+    finally:
+        dist.destroy_process_group()
+
+
 def _wrong_owner_worker(
     rank: int,
     init_file: str,
@@ -859,6 +908,47 @@ def test_three_rank_wrong_callback_owner_is_symmetric_and_group_recovers(
     ]
     assert [result["adaptive_calls"] for result in results] == [0, 0, 0]
     assert [result["recovery"] for result in results] == [6, 6, 6]
+
+
+@pytest.mark.parallel
+def test_two_rank_mismatched_decode_plans_fail_before_decoder_collectives(
+    tmp_path: Path,
+) -> None:
+    context = mp.get_context("spawn")
+    result_queue = context.Queue()
+    init_file = str(tmp_path / "gloo-mismatched-plan-init")
+    processes = [
+        context.Process(
+            target=_mismatched_plan_worker,
+            args=(rank, init_file, result_queue),
+        )
+        for rank in range(2)
+    ]
+    for process in processes:
+        process.start()
+    deadline = time.monotonic() + 90
+    for process in processes:
+        process.join(timeout=max(0, deadline - time.monotonic()))
+    for process in processes:
+        if process.is_alive():
+            process.join(timeout=1)
+    hung = [process for process in processes if process.is_alive()]
+    for process in hung:
+        process.terminate()
+        process.join(timeout=5)
+    assert not hung, "mismatched MiniMax-H3 decode plans deadlocked"
+    assert [process.exitcode for process in processes] == [0, 0]
+
+    results = sorted(
+        [result_queue.get(timeout=5) for _ in range(2)],
+        key=lambda result: result["rank"],
+    )
+    assert [result["failure_type"] for result in results] == [
+        MiniMaxH3ChunkedDecodeUnsupportedError.__name__,
+        MiniMaxH3ChunkedDecodeUnsupportedError.__name__,
+    ]
+    assert [result["adaptive_calls"] for result in results] == [0, 0]
+    assert [result["recovery"] for result in results] == [3, 3]
 
 
 @pytest.mark.parallel
