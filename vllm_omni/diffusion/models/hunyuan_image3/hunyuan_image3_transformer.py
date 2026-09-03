@@ -2205,6 +2205,7 @@ class HunyuanImage3Model(nn.Module):
         )
 
     def _get_expert_weights_remapping(self) -> dict[str, tuple[str, int, int]]:
+        """Return the vLLM-Omni-local remapping for Hunyuan checkpoint weights."""
         if not _is_moe(self.config):
             return {}
         return {

@@ -97,7 +97,7 @@ def test_model_loaders_do_not_call_removed_get_cache_scale(rel_path: str) -> Non
         ),
     ],
 )
-def test_hunyuan_expert_mapping_uses_vllm_public_contract(
+def test_hunyuan_expert_mapping_separates_public_and_local_contracts(
     module_name: str,
     class_name: str,
     monkeypatch: pytest.MonkeyPatch,
