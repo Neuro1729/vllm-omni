@@ -232,10 +232,7 @@ class _MiniMaxH3ChunkDecodeCoordinator:
                     dtype=torch.int64,
                     device=device,
                 )
-                gathered_signatures = [
-                    torch.empty_like(padded_signature)
-                    for _ in range(dist.get_world_size(group))
-                ]
+                gathered_signatures = [torch.empty_like(padded_signature) for _ in range(dist.get_world_size(group))]
                 dist.all_gather(gathered_signatures, padded_signature, group=group)
                 if any(not torch.equal(padded_signature, peer) for peer in gathered_signatures):
                     raise MiniMaxH3ChunkedDecodeUnsupportedError(
