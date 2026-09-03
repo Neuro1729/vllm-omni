@@ -535,6 +535,8 @@ def test_typed_engine_args_preserve_explicit_backend_default_overrides(tmp_path)
 
     assert {name: legacy_args[name] for name in expected} == expected
     assert {name: typed_args[name] for name in expected} == expected
+    assert legacy_args["moe_backend"] == "triton"
+    assert typed_args["moe_backend"] == "triton"
 
 
 @pytest.mark.parametrize("stage_scoped", [False, True], ids=["global", "stage-scoped"])
