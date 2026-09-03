@@ -1,9 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 import argparse
+import json
 import os
 import urllib.request
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import soundfile as sf
@@ -17,6 +19,16 @@ from vllm_omni.transformers_utils.configs.cosyvoice3 import CosyVoice3Config
 
 # Upstream zero-shot reference clip
 ZERO_SHOT_PROMPT_URL = "https://raw.githubusercontent.com/FunAudioLLM/CosyVoice/main/asset/zero_shot_prompt.wav"
+
+
+def parse_profiler_config(value: str) -> dict[str, Any]:
+    try:
+        config = json.loads(value)
+    except json.JSONDecodeError as e:
+        raise argparse.ArgumentTypeError(f"--profiler-config must be valid JSON: {e}") from e
+    if not isinstance(config, dict):
+        raise argparse.ArgumentTypeError("--profiler-config must be a JSON object")
+    return config
 
 
 def _default_ref_audio() -> str:
@@ -44,6 +56,12 @@ def run_e2e():
         default=None,
         help="Override the deploy config path. If unset, auto-loads "
         "vllm_omni/deploy/cosyvoice3.yaml based on the HF model_type.",
+    )
+    parser.add_argument(
+        "--profiler-config",
+        type=parse_profiler_config,
+        default=None,
+        help='JSON profiler config for torch/cuda profiling, e.g. \'{"profiler":"torch","torch_profiler_dir":"./perf"}\'.',
     )
     parser.add_argument("--text", type=str, default="Hello, this is a test of the CosyVoice system capability.")
     parser.add_argument(
@@ -79,6 +97,7 @@ def run_e2e():
         deploy_config=args.deploy_config,
         tokenizer=args.tokenizer,
         log_stats=True,
+        profiler_config=args.profiler_config,
     )
 
     sampling_cfg = {"top_p": 0.8, "top_k": 25, "eos_token_id": 6561 + 1}
@@ -149,8 +168,8 @@ def run_e2e():
 
     sampling_params_list = [gpt_sampling, s2mel_sampling]
 
-    # Start profiling (requires VLLM_TORCH_PROFILER_DIR env var)
-    if os.environ.get("VLLM_TORCH_PROFILER_DIR"):
+    profiler_enabled = args.profiler_config is not None
+    if profiler_enabled:
         print("Starting profiler...")
         omni.start_profile()
 
@@ -158,7 +177,7 @@ def run_e2e():
     outputs = list(omni.generate(prompts, sampling_params_list=sampling_params_list[:2]))
 
     # Stop profiling and get results
-    if os.environ.get("VLLM_TORCH_PROFILER_DIR"):
+    if profiler_enabled:
         print("Stopping profiler...")
         profile_results = omni.stop_profile()
         print(f"Profile traces saved to: {profile_results}")

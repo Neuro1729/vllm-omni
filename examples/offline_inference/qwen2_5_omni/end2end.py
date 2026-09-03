@@ -5,10 +5,11 @@ This example shows how to use vLLM-Omni for running offline inference
 with the correct prompt format on Qwen2.5-Omni
 """
 
+import argparse
 import json
 import os
 import time
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 import numpy as np
 import soundfile as sf
@@ -29,6 +30,16 @@ SEED = 42
 class QueryResult(NamedTuple):
     inputs: dict
     limit_mm_per_prompt: dict[str, int]
+
+
+def parse_profiler_config(value: str) -> dict[str, Any]:
+    try:
+        config = json.loads(value)
+    except json.JSONDecodeError as e:
+        raise argparse.ArgumentTypeError(f"--profiler-config must be valid JSON: {e}") from e
+    if not isinstance(config, dict):
+        raise argparse.ArgumentTypeError("--profiler-config must be a JSON object")
+    return config
 
 
 # NOTE: The default `max_num_seqs` and `max_model_len` may result in OOM on
@@ -378,11 +389,11 @@ def main(args):
         for i, prompt in enumerate(prompts):
             prompt["modalities"] = output_modalities
 
-    profiler_enabled = bool(os.getenv("VLLM_TORCH_PROFILER_DIR"))
+    profiler_enabled = args.profiler_config is not None
     if profiler_enabled and hasattr(omni, "start_profile"):
         omni.start_profile(stages=[0])
     elif profiler_enabled:
-        print("[Warn] VLLM_TORCH_PROFILER_DIR is set, but current engine does not support profiler controls.")
+        print("[Warn] --profiler-config was provided, but current engine does not support profiler controls.")
     omni_generator = omni.generate(prompts, sampling_params_list, py_generator=args.py_generator)
 
     # Determine output directory: prefer --output-dir; fallback to --output-wav
@@ -457,6 +468,12 @@ def parse_args():
         action="store_true",
         default=False,
         help="Enable writing detailed statistics (default: disabled)",
+    )
+    parser.add_argument(
+        "--profiler-config",
+        type=parse_profiler_config,
+        default=None,
+        help='JSON profiler config for torch/cuda profiling, e.g. \'{"profiler":"torch","torch_profiler_dir":"./perf"}\'.',
     )
     parser.add_argument(
         "--stage-init-timeout",
