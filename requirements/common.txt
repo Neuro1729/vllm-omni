@@ -1,8 +1,7 @@
 # Common dependencies for all platforms
 # transformers: required unified multimodal model classes are unavailable
 # before 5.10.1; 5.10.0 is yanked, and 5.15 has a known construction
-# regression. kernels 0.16.0's stable-ABI Hub integration also requires
-# transformers 5.13.0 or newer. transformers 5.9 also changed
+# regression. transformers 5.9 also changed
 # _adjust_missing_and_unexpected_keys from
 # list+list to set|set, breaking models that declare
 # _keys_to_ignore_on_load_unexpected as a list (e.g. OpenMOSS-Team/MOSS-TTS-Nano)
@@ -10,12 +9,13 @@
 # That breakage is now handled in code instead of by pinning:
 # MossTTSNanoForGeneration wraps weight loading in
 # transformers_keys_to_ignore_compat (vllm_omni/model_executor/models/utils.py).
-transformers >= 5.13.0, < 5.15
+transformers >= 5.10.1, < 5.15
 av>=14.0.0
 omegaconf>=2.3.0
 diffusers==0.40.0
-# Hub kernels, including LTX-2.5 NATTEN
-kernels==0.16.0
+# Hub kernels, including LTX-2.5 NATTEN. Keep this pin in sync with the
+# supported transformers range above.
+kernels==0.15.2
 safetensors>=0.8.0
 accelerate==1.12.0
 soundfile>=0.13.1
