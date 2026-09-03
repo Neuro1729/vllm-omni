@@ -18,6 +18,6 @@ _EXAMPLES = (
 def test_offline_examples_use_typed_profiler_config(relative_path: str):
     source = (_REPO_ROOT / relative_path).read_text(encoding="utf-8")
 
-    assert "--profiler-config" in source
+    assert "add_profiler_config_arg(parser)" in source
     assert "profiler_enabled = args.profiler_config is not None" in source
     assert "VLLM_TORCH_PROFILER_DIR" not in source

@@ -1,11 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 import argparse
-import json
 import os
 import urllib.request
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 import soundfile as sf
@@ -16,19 +14,10 @@ from vllm_omni.entrypoints.omni import Omni
 from vllm_omni.model_executor.models.cosyvoice3.tokenizer import get_qwen_tokenizer
 from vllm_omni.model_executor.models.cosyvoice3.utils import extract_text_token
 from vllm_omni.transformers_utils.configs.cosyvoice3 import CosyVoice3Config
+from vllm_omni.utils.profiler import add_profiler_config_arg
 
 # Upstream zero-shot reference clip
 ZERO_SHOT_PROMPT_URL = "https://raw.githubusercontent.com/FunAudioLLM/CosyVoice/main/asset/zero_shot_prompt.wav"
-
-
-def parse_profiler_config(value: str) -> dict[str, Any]:
-    try:
-        config = json.loads(value)
-    except json.JSONDecodeError as e:
-        raise argparse.ArgumentTypeError(f"--profiler-config must be valid JSON: {e}") from e
-    if not isinstance(config, dict):
-        raise argparse.ArgumentTypeError("--profiler-config must be a JSON object")
-    return config
 
 
 def _default_ref_audio() -> str:
@@ -57,12 +46,7 @@ def run_e2e():
         help="Override the deploy config path. If unset, auto-loads "
         "vllm_omni/deploy/cosyvoice3.yaml based on the HF model_type.",
     )
-    parser.add_argument(
-        "--profiler-config",
-        type=parse_profiler_config,
-        default=None,
-        help='JSON profiler config for torch/cuda profiling, e.g. \'{"profiler":"torch","torch_profiler_dir":"./perf"}\'.',
-    )
+    add_profiler_config_arg(parser)
     parser.add_argument("--text", type=str, default="Hello, this is a test of the CosyVoice system capability.")
     parser.add_argument(
         "--prompt-text",
