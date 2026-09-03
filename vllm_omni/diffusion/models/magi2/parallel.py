@@ -124,7 +124,10 @@ def get_magi2_replica_group(data_parallel_size: int) -> Magi2ParallelGroup:
     The pipeline uses this group for conditioning broadcasts and output-rank
     ownership.  With DP=1 the diffusion world is exactly one TP x SP replica.
     With DP>1, MAGI currently requires TP=1, so the existing SP group is the
-    complete per-replica group.  Topology validation enforces those premises.
+    complete per-replica group. CFG x DP is deliberately rejected by
+    ``_validate_native_topology``; if that combination is enabled in the
+    future, this helper must select a group fixed to one DP replica and include
+    its CFG ranks rather than returning the SP group alone.
     """
 
     if not dist.is_available() or not dist.is_initialized():

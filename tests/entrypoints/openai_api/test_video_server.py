@@ -677,6 +677,25 @@ def test_magi2_serving_applies_native_defaults_and_rejects_explicit_frame_mismat
     assert sampling.num_frames == 125
     assert sampling.fps == sampling.frame_rate == 12.5
     assert sampling.num_inference_steps == 100
+    assert "duration" not in sampling.extra_args
+
+    with pytest.raises(HTTPException, match="10-second clips only"):
+        asyncio.run(
+            handler._run_and_extract(
+                VideoGenerationRequest(prompt="A fox walks through snow", seconds="5"),
+                "bad-duration",
+            )
+        )
+    with pytest.raises(HTTPException, match="10-second clips only"):
+        asyncio.run(
+            handler._run_and_extract(
+                VideoGenerationRequest(
+                    prompt="A fox walks through snow",
+                    extra_params={"duration": 5},
+                ),
+                "bad-duration-extra",
+            )
+        )
 
     with pytest.raises(HTTPException, match="requires 125 frames"):
         asyncio.run(

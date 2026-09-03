@@ -178,6 +178,11 @@ native auxiliary staging remains active.
 
 ## Online serving
 
+The OpenAI-compatible serving defaults are the full `540p` preset and `100`
+denoising steps. The model always generates a 10-second, 125-frame clip at
+12.5 fps; pass `resolution=272p` and `num_inference_steps=1` for a low-cost
+load smoke. Requests with another duration are rejected before generation.
+
 ```bash
 export CUDA_VISIBLE_DEVICES=0,1,2,3
 

@@ -21,6 +21,7 @@ class VideoGenerationDefaults:
     flow_shift: float | None = None
     dimension_multiple: int = 16
     default_negative_prompt: str | None = ""
+    duration_seconds: float | None = None
 
     @property
     def max_area(self) -> int:

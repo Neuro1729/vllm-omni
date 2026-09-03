@@ -527,7 +527,11 @@ class Magi2Pipeline(
 
     @staticmethod
     def _remap_ckpt_key(checkpoint_key: str) -> str | None:
-        """Map released Preview keys to the native pipeline namespace."""
+        """Map released Preview keys to the native pipeline namespace.
+
+        The DLO host-weight planner looks this hook up by name when it builds
+        a direct mmap plan; the ordinary loader uses ``load_weights`` below.
+        """
 
         checkpoint_key = checkpoint_key.removeprefix("transformer.")
         if checkpoint_key.startswith(("block.", "pre_adapter.", "post_adapter.")):
@@ -837,6 +841,10 @@ class Magi2Pipeline(
     ) -> torch.Tensor:
         special: torch.Tensor | None = None
         if self._is_output_rank:
+            # This helper only tokenizes the prompt and pools rows that are
+            # already present in ``context``; it does not read encoder weights.
+            # Keep it outside the staged encoder window so CPU-only pooling
+            # cannot trigger an unnecessary device transfer.
             special = self.text_encoder.module.pool_figure_tokens(
                 prompt,
                 ["<Figure 1>"],
@@ -903,7 +911,15 @@ class Magi2Pipeline(
 
         latent_height = height // MAGI2_GENERATION_CONFIG.video_vae_stride[1]
         latent_width = width // MAGI2_GENERATION_CONFIG.video_vae_stride[2]
-        video_frame_length = int(round(MAGI2_GENERATION_CONFIG.duration_seconds * MAGI2_GENERATION_CONFIG.fps * 2))
+        public_frame_length = int(round(MAGI2_GENERATION_CONFIG.duration_seconds * MAGI2_GENERATION_CONFIG.fps))
+        if public_frame_length != MAGI2_GENERATION_CONFIG.output_frames:
+            raise RuntimeError(
+                "MAGI-2 generation config is inconsistent: duration_seconds * fps must equal output_frames"
+            )
+        # The Preview DiT/decoder operates on the internal 25-FPS timeline,
+        # while the public output contract is 12.5 FPS. The internal timeline
+        # is therefore twice as long; the decoded result is muxed at 12.5 FPS.
+        video_frame_length = public_frame_length * 2
         latent_length = (video_frame_length - 1) // MAGI2_GENERATION_CONFIG.video_vae_stride[0] + 1
         audio_length = int(round(MAGI2_GENERATION_CONFIG.duration_seconds * MAGI2_GENERATION_CONFIG.audio_latent_fps))
         # Draw order is parity-critical: video noise precedes audio noise.
@@ -1048,8 +1064,16 @@ class Magi2Pipeline(
 
         has_cuda = current_omni_platform.is_cuda() and current_omni_platform.is_available()
         device_index = torch.accelerator.current_device_index() if has_cuda else None
-        monitor = _PeakReservedMonitor(device_index) if device_index is not None else None
+        # Sampling reserved memory is qualification instrumentation, not part
+        # of ordinary serving. It starts only when the pipeline profiler is
+        # explicitly enabled, so every CUDA request avoids a 20 Hz thread.
+        monitor = (
+            _PeakReservedMonitor(device_index)
+            if device_index is not None and getattr(self, "enable_diffusion_pipeline_profiler", False)
+            else None
+        )
         monitor_started = False
+        started = time.perf_counter()
         try:
             if monitor is not None:
                 monitor.start()

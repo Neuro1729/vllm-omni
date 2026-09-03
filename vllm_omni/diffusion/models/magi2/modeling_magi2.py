@@ -343,7 +343,6 @@ class Magi2PreAdapter(nn.Module):
         video_indices: torch.Tensor,
         audio_indices: torch.Tensor,
         text_indices: torch.Tensor,
-        _time_indices: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         rope = self.rope(coords_mapping)
         output = torch.zeros(
@@ -654,7 +653,6 @@ class Magi2PreviewTransformer(nn.Module):
         video_indices = torch.nonzero(modality_mapping == int(Modality.VIDEO)).flatten()
         audio_indices = torch.nonzero(modality_mapping == int(Modality.AUDIO)).flatten()
         text_indices = torch.nonzero(modality_mapping == int(Modality.TEXT)).flatten()
-        time_indices = torch.nonzero(time_mask).flatten()
 
         hidden_states, rope = self.pre_adapter(
             x,
@@ -662,7 +660,6 @@ class Magi2PreviewTransformer(nn.Module):
             video_indices,
             audio_indices,
             text_indices,
-            time_indices,
         )
         if time_token_sequence is not None and time_token_sequence.shape[-1] > 0:
             hidden_states[:, : time_token_sequence.shape[-1]] = time_token_sequence.to(hidden_states.dtype)

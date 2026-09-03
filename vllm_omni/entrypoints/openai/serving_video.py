@@ -241,6 +241,31 @@ class OmniOpenAIServingVideo:
                 )
             if "num_inference_steps" not in provided_fields and gen_params.num_inference_steps is None:
                 gen_params.num_inference_steps = video_defaults.num_inference_steps
+
+        # Some native pipelines have a fixed duration. Validate both the
+        # OpenAI top-level field and model-specific aliases before dispatching
+        # the request; otherwise ``seconds`` would reach MAGI-2 as a duration
+        # override and fail only after the worker has started generation.
+        if video_defaults is not None and video_defaults.duration_seconds is not None:
+            requested_durations: list[float] = []
+            try:
+                if request.seconds is not None:
+                    requested_durations.append(float(request.seconds))
+                if request.extra_params is not None:
+                    for key in ("seconds", "duration"):
+                        if key in request.extra_params:
+                            requested_durations.append(float(request.extra_params[key]))
+            except (TypeError, ValueError) as exc:
+                raise HTTPException(
+                    status_code=HTTPStatus.BAD_REQUEST.value,
+                    detail="The requested video duration must be a finite number of seconds.",
+                ) from exc
+            expected_duration = video_defaults.duration_seconds
+            if any(not math.isfinite(duration) or duration != expected_duration for duration in requested_durations):
+                raise HTTPException(
+                    status_code=HTTPStatus.BAD_REQUEST.value,
+                    detail=f"This diffusion model supports {expected_duration:g}-second clips only.",
+                )
         if (
             input_image is not None
             and vp.width is not None
@@ -270,7 +295,8 @@ class OmniOpenAIServingVideo:
             gen_params.num_frames = vp.num_frames
         gen_params.num_outputs_per_prompt = request.num_outputs_per_prompt
         if request.seconds is not None:
-            gen_params.extra_args.setdefault("duration", float(request.seconds))
+            if video_defaults is None or video_defaults.duration_seconds is None:
+                gen_params.extra_args.setdefault("duration", float(request.seconds))
         if request.aspect_ratio is not None:
             gen_params.extra_args["aspect_ratio"] = request.aspect_ratio
         if request.short_edge is not None:

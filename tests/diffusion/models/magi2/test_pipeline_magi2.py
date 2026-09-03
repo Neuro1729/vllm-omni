@@ -103,6 +103,7 @@ def _pipeline() -> tuple[Magi2Pipeline, _FakeNativeRuntime]:
     pipe = Magi2Pipeline.__new__(Magi2Pipeline)
     nn.Module.__init__(pipe)
     pipe.deterministic = False
+    pipe.enable_diffusion_pipeline_profiler = False
     runtime = _FakeNativeRuntime()
 
     def evaluate(_self, **kwargs):
@@ -291,6 +292,7 @@ def test_forward_rejects_zero_inference_steps_before_generation(monkeypatch):
 
 def test_forward_stops_peak_monitor_when_initial_synchronize_fails(monkeypatch):
     pipe, runtime = _pipeline()
+    pipe.enable_diffusion_pipeline_profiler = True
     monitor = Mock(peak_bytes=0)
     monkeypatch.setattr(
         "vllm_omni.diffusion.models.magi2.pipeline_magi2.current_omni_platform.is_cuda",
@@ -313,6 +315,31 @@ def test_forward_stops_peak_monitor_when_initial_synchronize_fails(monkeypatch):
     monitor.start.assert_called_once_with()
     monitor.stop.assert_called_once_with()
     assert not runtime.calls
+
+
+def test_forward_does_not_start_peak_monitor_without_profiler(monkeypatch):
+    pipe, runtime = _pipeline()
+    monitor_factory = Mock(side_effect=AssertionError("unexpected memory monitor"))
+    monkeypatch.setattr(
+        "vllm_omni.diffusion.models.magi2.pipeline_magi2.current_omni_platform.is_cuda",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        "vllm_omni.diffusion.models.magi2.pipeline_magi2.current_omni_platform.is_available",
+        lambda: True,
+    )
+    monkeypatch.setattr(torch.accelerator, "current_device_index", lambda: 0)
+    monkeypatch.setattr(torch.accelerator, "synchronize", Mock())
+    monkeypatch.setattr(
+        "vllm_omni.diffusion.models.magi2.pipeline_magi2._PeakReservedMonitor",
+        monitor_factory,
+    )
+
+    result = pipe(_request("A fox walks through snow"))
+
+    monitor_factory.assert_not_called()
+    assert result.peak_memory_mb == 0.0
+    assert len(runtime.calls) == 1
 
 
 def test_forward_rejects_multiple_images(monkeypatch):
@@ -400,6 +427,11 @@ def test_native_topology_accepts_four_device_hsdp_cfg_and_vae_layouts():
             vae_patch_parallel_size=4,
         )
     )
+
+
+def test_native_topology_rejects_cfg_data_parallel_combination():
+    with pytest.raises(ValueError, match="CFG parallelism.*DLO data parallelism"):
+        _validate_native_topology(_topology_config(cfg_parallel_size=2, data_parallel_size=2))
 
 
 def test_cfg_parallel_branch_adapter_preserves_packed_cfg_math():

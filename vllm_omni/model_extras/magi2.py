@@ -20,7 +20,7 @@ MAGI2_EXTRA_BODY_PARAMS = frozenset(
         "deterministic",
     }
 )
-MAGI2_EXTRA_OUTPUT_PARAMS = frozenset()
+MAGI2_EXTRA_OUTPUT_PARAMS: frozenset[str] = frozenset()
 
 
 def magi2_preserves_reference_image_size(
@@ -49,6 +49,7 @@ def get_magi2_video_generation_defaults(
         num_frames=125,
         num_inference_steps=100,
         fps=12.5,
+        duration_seconds=10.0,
         output="magi2_output.mp4",
         default_negative_prompt=None,
     )

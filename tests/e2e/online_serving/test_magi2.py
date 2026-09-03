@@ -70,6 +70,7 @@ def test_magi2_preview_serving_smoke(
             "seed": 42,
             "extra_params": json.dumps({"resolution": "272p"}),
         },
+        "expected_audio": {"sample_rate": 44100, "channels": 2},
     }
 
     online_client.send_video_diffusion_request(request_config)
