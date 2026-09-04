@@ -26,9 +26,9 @@ from vllm_omni.diffusion.models.wan2_2.pipeline_wan2_2 import (
     load_wan_weights_with_optional_gate,
 )
 
-# SkyReels Diffusers docs: flow_shift=8.0 for T2V, guidance_scale=6.0
+# SkyReels Diffusers docs: flow_shift=8.0 for T2V.
+# Recommended sampling guidance_scale is 6.0 (set via OmniDiffusionSamplingParams).
 SKYREELS_V2_DEFAULT_FLOW_SHIFT = 8.0
-SKYREELS_V2_DEFAULT_GUIDANCE_SCALE = 6.0
 
 
 def get_skyreels_v2_post_process_func(od_config: OmniDiffusionConfig):
@@ -82,5 +82,4 @@ __all__ = [
     "get_skyreels_v2_post_process_func",
     "get_skyreels_v2_pre_process_func",
     "SKYREELS_V2_DEFAULT_FLOW_SHIFT",
-    "SKYREELS_V2_DEFAULT_GUIDANCE_SCALE",
 ]

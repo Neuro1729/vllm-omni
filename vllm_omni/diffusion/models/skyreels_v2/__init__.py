@@ -3,7 +3,6 @@
 
 from .pipeline_skyreels_v2 import (
     SKYREELS_V2_DEFAULT_FLOW_SHIFT,
-    SKYREELS_V2_DEFAULT_GUIDANCE_SCALE,
     SkyReelsV2Pipeline,
     get_skyreels_v2_post_process_func,
     get_skyreels_v2_pre_process_func,
@@ -16,5 +15,4 @@ __all__ = [
     "get_skyreels_v2_post_process_func",
     "get_skyreels_v2_pre_process_func",
     "SKYREELS_V2_DEFAULT_FLOW_SHIFT",
-    "SKYREELS_V2_DEFAULT_GUIDANCE_SCALE",
 ]
