@@ -11,6 +11,8 @@ import numpy as np
 import torch
 
 from vllm_omni.entrypoints.omni import Omni
+from vllm_omni.inputs.data import OmniDiffusionSamplingParams
+from vllm_omni.outputs import OmniRequestOutput
 from vllm_omni.platforms import current_omni_platform
 
 
@@ -58,11 +60,7 @@ def main() -> None:
         boundary_ratio=0.0,
     )
 
-    frames = omni.generate(
-        {
-            "prompt": args.prompt,
-            "negative_prompt": args.negative_prompt,
-        },
+    sampling_params = OmniDiffusionSamplingParams(
         height=args.height,
         width=args.width,
         generator=generator,
@@ -71,10 +69,20 @@ def main() -> None:
         num_frames=args.num_frames,
     )
 
-    # Omni may return OmniRequestOutput / nested payloads depending on version.
-    if hasattr(frames, "request_output"):
-        payload = frames.request_output[0]
-        video = payload.images if hasattr(payload, "images") else payload
+    frames = omni.generate(
+        {
+            "prompt": args.prompt,
+            "negative_prompt": args.negative_prompt,
+        },
+        sampling_params,
+    )
+
+    if isinstance(frames, list):
+        frames = frames[0] if frames else None
+    if isinstance(frames, OmniRequestOutput):
+        video = frames.images
+        if isinstance(video, list) and len(video) == 1:
+            video = video[0]
     else:
         video = frames
 
@@ -110,6 +118,7 @@ def main() -> None:
 
     export_to_video(video_array, str(output_path), fps=args.fps)
     print(f"Saved generated video to {output_path}")
+    omni.close()
 
 
 if __name__ == "__main__":
